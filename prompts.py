@@ -10,8 +10,8 @@ NEVER output the string "None" — always use JSON null.
 If the document is an amendment (dodatek), you MUST leave null ALL fields that are NOT explicitly changed or stated by this amendment document.
 Do NOT infer, copy, or guess values from context — only populate fields that this specific amendment document explicitly modifies.
 In particular:
-  - startAt: leave null UNLESS the amendment explicitly states the policy inception/start date is being changed.
-    Renewal period dates (the period this amendment covers, e.g. "od 14.08.2024 do 14.08.2025") are NOT changes to startAt.
+  - startAt: ALWAYS null for amendments
+  - concludedAt: ALWAYS null for amendments 
   - actionOnInsurancePeriodTermination: leave null UNLESS the amendment explicitly changes termination/renewal behaviour.
 
 === EXTRACTION RULES ===
@@ -45,9 +45,10 @@ concludedAs:
 
 contractRegime:
   - "individual"   — standard individual policy (individuální smlouva)
-  - "frame"        — rámcová smlouva
-  - "fleet"        — flotila vozidel
-  - "coinsurance"  — koasigurace
+  - "frame"        — framework agreement (rámcová smlouva) covering multiple individual policies under the same terms
+  - "fleet"        — fleet insurance (flotila) covering multiple vehicles under the same contract
+  - "coinsurance"  — the policy explicitly states co-insurance / co-insurers or shows multiple insurers sharing the same risk with participation shares or a lead insurer.
+  - Return coinsurance only if the document explicitly states co-insurance / co-insurers or shows multiple insurers sharing the same risk (e.g., participation shares or a lead insurer); otherwise return individual
 
 startAt:
   - Original policy inception date (datum počátku pojištění / datum uzavření pojistné smlouvy)
@@ -92,6 +93,7 @@ actionOnInsurancePeriodTermination:
   - "policy-termination" — contract terminates
   - Set "auto-renewal" ONLY if the document explicitly states that the insurance
     automatically continues after the insurance period unless cancelled.
+  - Set "policy-termination" if the contract ends after the insurance period, even if it can be extended by amendment.
   - For amendments: null UNLESS the amendment explicitly changes this behaviour.
 
 noticePeriod:
@@ -106,9 +108,7 @@ latestEndorsementNumber:
   - Always null here; this field is computed during aggregation
 
 note:
-  - For the main contract: write a comprehensive Czech-language summary of all special conditions,
-    coverage extensions, territorial scope, discounts, exclusions, and declarations present in the document.
-    This should be rich and detailed, not just a one-liner.
+  - For the main contract: write a comprehensive summary of all special conditions,
   - For amendments: summarise only the specific changes or declarations introduced by this amendment.
   - JSON null if there are truly no special conditions worth noting.
 
@@ -124,7 +124,7 @@ No markdown fences, no explanation — JSON only.
 All absent/unknown fields must be JSON null, NEVER the string "None".
 """
 
-PROMPT_INSURER_NAME = """You are an expert on Czech insurance companies.
+PROMPT_INSURER_NAME = """You are an expert on insurance companies.
 Below is a list of insurer name variants extracted by OCR from different pages of an insurance contract.
 Some may be truncated, misspelled, or abbreviated due to OCR errors.
 

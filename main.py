@@ -160,10 +160,14 @@ def solve(payload: dict):
     #    pass  # Cache miss or DB unavailable — proceed with extraction
 
     # --- Per-document extraction ------------------------------------------------
+    log.debug(f"Extracting data from {len(documents)} documents...")
+
     extracts = [
         extract_document(doc["ocr_text"], doc["filename"], gemini)
         for doc in documents
     ]
+
+    log.debug(f"Extracted {len(extracts)} documents, starting aggregation...")
 
     # --- Debug logging of extracts (can be removed in production) ----------------
     for i, extract in enumerate(extracts):
@@ -173,7 +177,9 @@ def solve(payload: dict):
     final = aggregate(extracts)
 
     # --- Refinement (LLM post-processing) ---------------------------------------
+    log.debug("Refining aggregated result with LLM post-processing...")
     final = refine(final, extracts, gemini)
+    log.debug("Refinement complete.")
 
     result = final.model_dump()
 
