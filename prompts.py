@@ -121,6 +121,24 @@ latestEndorsementNumber:
   Check for: "Dodatek", "Doložka", "DP", endorsement numbers, amendment IDs.
   Return as string (e.g. "3"). null if none found.
 
+annualPremiumTotal:
+  Total annual premium across all coverages, as a number (no currency symbol).
+  If only a periodic premium is stated, annualise it (e.g. monthly × 12).
+  null if not stated.
+
+liabilityLimitHealth:
+  Liability coverage limit for bodily injury / health (újma na zdraví / újma na životě).
+  Number only (no currency). null if not stated or not applicable.
+
+liabilityLimitProperty:
+  Liability coverage limit for property damage (věcná škoda / škoda na věci).
+  Number only (no currency). null if not stated or not applicable.
+
+insuranceScope:
+  Short description of what is insured, e.g. "Povinné ručení a havarijní pojištění",
+  "Pojištění odpovědnosti", "Pojištění majetku". One short phrase, Czech language.
+  null if not clear from the document.
+
 note:
     Return one very short sentence for each unusual fact in the documents.
     The language of the note must be the same as the document (usually Czech).

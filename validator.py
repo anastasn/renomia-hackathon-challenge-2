@@ -27,6 +27,10 @@ _FIELD_RULES: dict[str, str] = {
     "latestEndorsementNumber": "Highest amendment/endorsement number anywhere in documents. Return as string.",
     "contractNumber": "Contract/policy number (číslo smlouvy, číslo pojistky).",
     "insurerName": "Full legal name of the insurer (pojistitel).",
+    "annualPremiumTotal": "Annual total premium as a number (annualise if needed). null if not stated.",
+    "liabilityLimitHealth": "Liability limit for bodily injury / health (újma na zdraví). Number only. null if not stated.",
+    "liabilityLimitProperty": "Liability limit for property damage (věcná škoda). Number only. null if not stated.",
+    "insuranceScope": "Short phrase describing what is insured (Czech). null if unclear.",
 }
 
 
