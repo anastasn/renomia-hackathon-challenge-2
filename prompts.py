@@ -29,6 +29,7 @@ contractNumber:
 
 insurerName:
   - Full legal name of the insurer / pojistitel (e.g. "Generali Česká pojišťovna a.s.")
+  - If the full name is not explicitly stated, it may be mentioned in a form of URL, email, or truncated name variant (e.g. "Generali", "Generali ČP", "Generali Česká pojišťovna") — in that case, return the exact variant as it appears in the document, and let the post-aggregation refinement step resolve the canonical name across all documents.
 
 state:
   - "accepted"  — active, valid, signed contract (default for signed documents)
@@ -49,6 +50,7 @@ contractRegime:
   - "fleet"        — fleet insurance (flotila) covering multiple vehicles under the same contract
   - "coinsurance"  — if and only if two or more legal entities explicitly share the same insurance risk in the same document, e.g. via co-insurance / co-insurers or a lead insurer with participation shares; otherwise return "individual"
                    - if one insurer is addressed by different name variants in different documents, but there is no explicit co-insurance language, return "individual" and let the insurerName consolidation step resolve the correct name.
+                   - if one or more documents do not include any insurer name at all assume "individual" unless there is explicit co-insurance language in any document.
   - Return coinsurance only if the document explicitly states co-insurance / co-insurers or shows multiple insurers sharing the same risk (e.g., participation shares or a lead insurer); otherwise return individual
 
 startAt:
@@ -69,18 +71,23 @@ concludedAt:
   - For amendments: null unless explicitly stated.
 
 installmentNumberPerInsurancePeriod:
-  - Number of premium instalments per insurance period (Splátky / frekvence plateb)
-  - ročně / jednou ročně           → 1
-  - pololetně / dvakrát ročně      → 2
-  - čtvrtletně / čtyřikrát ročně   → 4
-  - měsíčně                        → 12
+  Extract the number of premium instalments per insurance period from explicit payment frequency wording only.
+  - ročně / jednou ročně / annual / 1x ročně           → 1
+  - pololetně / dvakrát ročně / semi-annual            → 2
+  - čtvrtletně / čtyřikrát ročně / quarterly           → 4
+  - měsíčně / monthly                                  → 12
+  - Look especially for words such as: "Splátky", "frekvence placení", "běžné pojistné", "pojistné se platí", "platební frekvence".
+  - Do NOT infer the value from insurance period length, contract duration, policy term, automatic renewal, discounts, or endorsement clauses.
+  - If no explicit payment frequency is stated anywhere in the provided documents, return null.
 
 insurancePeriodMonths:
-  - Length of the insurance period in months (pojistné období)
-  - ročně / jednou ročně           → 12
-  - pololetně / dvakrát ročně      → 6
-  - čtvrtletně / čtyřikrát ročně   → 3
-  - měsíčně                        → 1
+  Length of one insurance period (pojistné období) in months.
+  - ročně / jednou ročně / pojistný rok → 12
+  - pololetně / dvakrát ročně → 6
+  - čtvrtletně / čtyřikrát ročně → 3
+  - měsíčně → 1
+  - Use only wording related to the insurance period or premium cycle.
+  - Do NOT infer from contract duration (pojistná doba), discounts, auto-renewal clauses, or amendments unless they explicitly change the insurance period.
 
 premium.currency:
   - ISO 4217 code in lowercase (e.g. "czk", "eur", "usd")
@@ -88,6 +95,7 @@ premium.currency:
 premium.isCollection:
   - true  — broker collects the premium on behalf of the insurer (inkaso makléřem)
   - false — policyholder pays the insurer directly
+  - use null only for amendments, otherwise default to false if not explicitly stated
 
 actionOnInsurancePeriodTermination:
   - "auto-renewal"       — contract auto-renews (automatické prodloužení)
@@ -106,7 +114,11 @@ regPlate:
   - Vehicle licence plate number (SPZ / registrační značka), null for non-vehicle insurance
 
 latestEndorsementNumber:
-  - Always null here; this field is computed during aggregation
+  - Highest amendment / endorsement ID mentioned anywhere across documents of the same contract.
+  - Extract even if the ID appears inside the main contract.
+  - IDs may appear as amendment numbers, endorsement numbers, "Dodatek", "Doložka", "DP", "amendment", "endorsement" or similar numbered change blocks.
+  - If multiple IDs are found, return the highest one.
+  - If none are found, return null.
 
 note:
   - For the main contract: write a comprehensive summary of all special conditions,
@@ -133,6 +145,43 @@ Return only the full legal name as a plain string — no JSON, no explanation, n
 
 Variants:
 {variants}
+"""
+
+PROMPT_FIELDS_RECONCILIATION = """You are reconciling fields extracted from multiple insurance documents.
+Below are the per-document values for two fields, listed in document order:
+
+contractRegime values:
+{regime_values}
+
+actionOnInsurancePeriodTermination values:
+{action_values}
+
+Task:
+1. For contractRegime:
+      - "individual"   — standard individual policy (individuální smlouva)
+      - "frame"        — framework agreement (rámcová smlouva) covering multiple individual policies under the same terms
+      - "fleet"        — fleet insurance (flotila) covering multiple vehicles under the same contract
+      - "coinsurance"  — if and only if two or more legal entities explicitly share the same insurance risk in the same document, e.g. via co-insurance / co-insurers or a lead insurer with participation shares; otherwise return "individual"
+                       - if one insurer is addressed by different name variants in different documents, but there is no explicit co-insurance language, return "individual" and let the insurerName consolidation step resolve the correct name.
+                       - if one or more documents do not include any insurer name at all assume "individual" unless there is explicit co-insurance language in any document.
+      - Return coinsurance only if the document explicitly states co-insurance / co-insurers or shows multiple insurers sharing the same risk (e.g., participation shares or a lead insurer); otherwise return individual
+2. For actionOnInsurancePeriodTermination:
+      - "auto-renewal"       — contract auto-renews (automatické prodloužení)
+      - "policy-termination" — contract terminates after the insurance period
+      - Set "auto-renewal" ONLY if the document explicitly states that the insurance automatically continues after the insurance period unless cancelled / unless notice is given.    automatically continues after the insurance period unless cancelled.
+      - Set "policy-termination" if the contract ends after the insurance period, even if it can be extended by amendment.
+      - Set "policy-termination" also when continuation requires an amendment, addendum, agreement of the parties, prolongation, or any explicit renewal step.
+        Phrases like "uplynutím pojistné doby pojištění zanikne", "nedohodnou-li se smluvní strany", "formou číslovaného dodatku", or "dohodly se na prolongaci pojistné doby" mean "policy-termination", not "auto-renewal".
+
+Return a JSON object with exactly two keys:
+  "contractRegime": one of "individual", "frame", "fleet", "coinsurance", or null
+  "actionOnInsurancePeriodTermination": one of "auto-renewal", "policy-termination", or null
+
+=== DOCUMENTS ===
+
+{documents_block}
+
+No markdown fences, no explanation — JSON object only.
 """
 
 PROMPT_NOTE_CONSOLIDATION = """You are summarising Czech insurance contract notes.

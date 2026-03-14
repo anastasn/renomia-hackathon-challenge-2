@@ -112,8 +112,8 @@ def aggregate(extracts: list[ContractExtract]) -> FinalContract:
     for amendment in amendments:
         result = _apply_amendment(result, amendment)
 
-    # Compute latestEndorsementNumber from the highest amendment number present
-    amendment_numbers = [e.amendmentNumber for e in amendments if e.amendmentNumber is not None]
-    result.latestEndorsementNumber = str(max(amendment_numbers)) if amendment_numbers else None
+    # Fallback: if no document explicitly set actionOnInsurancePeriodTermination, default to policy-termination
+    if result.actionOnInsurancePeriodTermination is None:
+        result.actionOnInsurancePeriodTermination = "policy-termination"
 
     return result

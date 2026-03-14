@@ -43,7 +43,7 @@ class ContractExtract(BaseModel):
 
     premium: Premium | None = None
 
-    actionOnInsurancePeriodTermination: Literal["auto-renewal", "policy-termination"] = "policy-termination"
+    actionOnInsurancePeriodTermination: Literal["auto-renewal", "policy-termination"] | None = None
     noticePeriod: str | None = None
 
     regPlate: str | None = None
