@@ -133,14 +133,13 @@ def aggregate(extracts: list[ContractExtract]) -> FinalContract:
     if result.actionOnInsurancePeriodTermination is None:
         result.actionOnInsurancePeriodTermination = "policy-termination"
 
-    # Fallback: if no document explicitly set installmentNumberPerInsurancePeriod, default to 1
-    if result.installmentNumberPerInsurancePeriod is None:
-        result.installmentNumberPerInsurancePeriod = 1
-
     if result.startAt is None and result.concludedAt is not None:
         result.startAt = result.concludedAt
 
     if result.concludedAt is None and result.startAt is not None:
         result.concludedAt = result.startAt
+
+    if result.concludedAs is None and result.concludedAt is not None:
+        result.concludedAs = "broker"
 
     return result

@@ -50,6 +50,7 @@ class ContractExtract(BaseModel):
     latestEndorsementNumber: str | None = None
     note: str | None = None
     reasoning: dict[str, str] | None = None
+    uncertainty: list[str] | None = None
 
 
 class FinalContract(BaseModel):
@@ -90,20 +91,7 @@ class PipelineState(TypedDict, total=False):
     documents: list[dict]           # input: [{filename, ocr_text}, ...]
     extracts: list["ContractExtract"]  # after extraction node
     aggregated: FinalContract       # after aggregation node
-    validated: FinalContract        # after validation node
     refined: FinalContract          # after refinement node
+    validated: FinalContract        # after validation node (final)
 
 
-class FieldCorrection(BaseModel):
-    """A single field correction produced by the validator."""
-
-    original: str | int | bool | None
-    corrected: str | int | bool | None
-    evidence: str  # verbatim quote from source document
-
-
-class ValidationOutput(BaseModel):
-    """Structured output from the validator LLM call."""
-
-    corrections: dict[str, FieldCorrection] = {}
-    result: FinalContract

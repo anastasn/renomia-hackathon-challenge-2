@@ -2,6 +2,7 @@
 
 import json
 import re
+from google.genai.types import GenerateContentConfig, ThinkingConfig
 from typing import Any
 
 from models import ContractExtract
@@ -96,11 +97,18 @@ def extract_all_documents(documents: list[dict], gemini: Any) -> list[ContractEx
 
     response = gemini.generate(
         prompt,
-        generation_config={
-            "response_mime_type": "application/json",
-            "response_schema": _BATCH_GEMINI_SCHEMA,
-            "temperature": 0.0,  # deterministic output
-        },
+        config=GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.0,  # deterministic output
+            thinking_config=ThinkingConfig(
+                thinking_level="MEDIUM",  # allow Gemini to "think" but keep latency reasonable
+            ),
+        ),
+        #generation_config={
+        #    "response_mime_type": "application/json",
+        #    "response_schema": _BATCH_GEMINI_SCHEMA,
+        #    "temperature": 0.0,  # deterministic output
+        #},
     )
     raw: str = response.text.strip()
 

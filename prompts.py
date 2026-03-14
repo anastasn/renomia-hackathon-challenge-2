@@ -1,284 +1,308 @@
 PROMPT_BATCH_EXTRACTION = """
-You are an expert at extracting structured data from insurance contracts.
-Your task is to analyze OCR text of insurance contracts or their amendments and extract structured data according to a provided Pydantic schema.
+You are an expert at extracting structured data from Czech insurance contracts (pojistné smlouvy) and their amendments (dodatky).
 
-CRITICAL: Use JSON null (not the string "None", not the string "null", not an empty string) for any field not present or not explicitly stated in the document.
-NEVER output the string "None" — always use JSON null.
+Analyze OCR text and extract fields per the schema below. Return a JSON array — one object per document, in input order. No markdown fences, no preamble.
 
-=== AMENDMENT RULE (most important) ===
+══════════════════════════════════════════════
+CARDINAL RULES
+══════════════════════════════════════════════
 
-If the document is an amendment (dodatek), you MUST leave null ALL fields that are NOT explicitly changed or stated by this amendment document.
-Do NOT infer, copy, or guess values from context — only populate fields that this specific amendment document explicitly modifies.
-In particular:
-  - startAt: ALWAYS null for amendments
-  - concludedAt: ALWAYS null for amendments
-  - actionOnInsurancePeriodTermination: leave null UNLESS the amendment explicitly changes termination/renewal behaviour.
+NULL:
+- Use JSON null for any field not explicitly stated. NEVER output the string "None", "null", or "".
+- "Not stated" and "implied" are both null.
 
-=== EXTRACTION RULES ===
+AMENDMENTS — override only:
+- Only populate fields the amendment EXPLICITLY changes.
+- startAt: ALWAYS null for amendments (never use the amendment's effective date as startAt).
+- concludedAt: ALWAYS null for amendments.
+- actionOnInsurancePeriodTermination: null UNLESS the amendment explicitly changes it.
+- premium.isCollection: null for amendments unless explicitly changed.
+
+══════════════════════════════════════════════
+FIELD EXTRACTION RULES
+══════════════════════════════════════════════
 
 documentType:
-  - "main"      — primary contract (pojistná smlouva, smlouva)
-  - "amendment" — addendum / rider (dodatek, rider, změna smlouvy)
-  - "terms"     — special terms and conditions (všeobecné pojistné podmínky, VPP)
+  "main"      — pojistná smlouva / smlouva
+  "amendment" — dodatek / rider / změna smlouvy
+  "terms"     — VPP / všeobecné pojistné podmínky
 
-amendmentNumber:
-  - Integer from "DODATEK č. N" or "Dodatek č. N", null for main contract
+amendmentNumber: integer from "DODATEK č. N" / "Dodatek č. N"; null for main
 
-contractNumber:
-  - Contract / policy number (číslo smlouvy, číslo pojistky, č. pojistné smlouvy)
+contractNumber: číslo smlouvy / číslo pojistky
 
 insurerName:
-  - Full legal name of the insurer / pojistitel (e.g. "Generali Česká pojišťovna a.s.")
-  - If the full name is not explicitly stated, it may be mentioned in a form of URL, email, or truncated name variant (e.g. "Generali", "Generali ČP", "Generali Česká pojišťovna") — in that case, return the exact variant as it appears in the document, and let the post-aggregation refinement step resolve the canonical name across all documents.
+  Full legal name of the insurer (pojistitel).
+  It might be found in various places: "pojistitel", "pojišťovna", "smluvní strana", "uzavírající strana", "pojistná společnost", or even just a URL.
+  Specifically for URL you are allowed to infer the insurer name from the domain (e.g. "generali.cz" → "Generali Česká pojišťovna a.s.").
 
 state:
-  - "accepted"  — active, valid, signed contract (default for signed documents)
-  - "cancelled" — terminated / zrušena / vypovězena
-  - "draft"     — unsigned proposal / návrh
+  "accepted"  — signed/active (default for signed documents)
+  "cancelled" — zrušena / vypovězena
+  "draft"     — unsigned / návrh
 
 assetType:
-  - "vehicle" — covers a motor vehicle (vozidlo, automobil, SPZ is present)
-  - "other"   — all other insurance types (liability, property, health, etc.)
+  "vehicle" — motor vehicle (SPZ / vozidlo / automobil present)
+  "other"   — all other types
 
 concludedAs:
-  - "broker" — concluded via a broker / makléř (e.g. Renomia)
-  - "agent"  — concluded directly via an insurance agent
+  "broker" — via makléř (e.g. Renomia)
+  "agent"  — via insurance agent directly
 
 contractRegime:
-  - "individual"   — standard individual policy (individuální smlouva)
-  - "frame"        — framework agreement (rámcová smlouva) covering multiple individual policies under the same terms
-  - "fleet"        — fleet insurance (flotila) covering multiple vehicles under the same contract
-  - "coinsurance"  — if and only if two or more legal entities explicitly share the same insurance risk in the same document, e.g. via co-insurance / co-insurers or a lead insurer with participation shares; otherwise return "individual"
-                   - if one insurer is addressed by different name variants in different documents, but there is no explicit co-insurance language, return "individual" and let the insurerName consolidation step resolve the correct name.
-                   - if one or more documents do not include any insurer name at all assume "individual" unless there is explicit co-insurance language in any document.
-  - Return coinsurance only if the document explicitly states co-insurance / co-insurers or shows multiple insurers sharing the same risk (e.g., participation shares or a lead insurer); otherwise return individual
+  "individual"   — standard individual policy
+  "frame"        — rámcová smlouva (framework covering multiple policies)
+  "fleet"        — flotila (multiple vehicles under one contract)
+  "coinsurance"  — ONLY when two or more legal entities explicitly share the same risk
+                   (co-insurers, participation shares, lead insurer language).
+                   Name variants of one insurer ≠ coinsurance.
 
-startAt:
-  - Original policy inception date (datum počátku pojištění / datum uzavření pojistné smlouvy)
-  - Format: DD.MM.YYYY, always zero-padded
-  - For amendments: only populate if the amendment EXPLICITLY states the policy inception date is changed.
-    Do NOT use the renewal period start date (the date range the amendment covers) as startAt.
+startAt (DD.MM.YYYY, zero-padded):
+  Original policy inception date (počátek pojištění / datum počátku).
+  Main contract: populate if explicitly stated.
+  Amendment: ALWAYS null — do NOT use the amendment's effective date.
 
-endAt:
-  - Policy expiry date in DD.MM.YYYY format
-  - null for indefinite-term contracts (doba neurčitá / na dobu neurčitou)
+endAt (DD.MM.YYYY or null):
+  Policy expiry date. null for indefinite term (doba neurčitá / na dobu neurčitou).
 
-concludedAt:
-  - The contract signing / conclusion date (datum uzavření smlouvy / datum podpisu)
-  - Same value as startAt for most main contracts, but can differ if the document explicitly states a different signing date.
-  - Format: DD.MM.YYYY, always zero-padded
-  - For the main contract: if not explicitly stated separately, concludedAt is often the same as startAt.
-  - For amendments: null unless explicitly stated.
+concludedAt (DD.MM.YYYY, zero-padded):
+  Signing / conclusion date (datum uzavření / datum podpisu).
+  Main contract: if not separately stated, same as startAt.
+  Amendment: ALWAYS null.
 
 installmentNumberPerInsurancePeriod:
-  Extract the number of premium instalments per insurance period from explicit payment frequency wording only.
-  - ročně / jednou ročně / annual / 1x ročně           → 1
-  - pololetně / dvakrát ročně / semi-annual            → 2
-  - čtvrtletně / čtyřikrát ročně / quarterly           → 4
-  - měsíčně / monthly                                  → 12
-  - Look especially for words such as: "Splátky", "frekvence placení", "běžné pojistné", "pojistné se platí", "platební frekvence".
-  - Do NOT infer the value from insurance period length, contract duration, policy term, automatic renewal, discounts, or endorsement clauses.
-  - If no explicit payment frequency is stated anywhere in the provided documents, return null.
+  Number of premium payments per insurance period.
+  Map ONLY explicit payment frequency words:
+    ročně / jednou ročně / 1× ročně    → 1
+    pololetně / dvakrát ročně          → 2
+    čtvrtletně / čtyřikrát ročně       → 4
+    měsíčně                            → 12
+    null if no explicit frequency stated.
+  Keywords: "Splátky", "frekvence placení", "pojistné se platí", "platební frekvence".
 
 insurancePeriodMonths:
-  Length of one insurance period (pojistné období) in months.
-  - ročně / jednou ročně / pojistný rok → 12
-  - pololetně / dvakrát ročně → 6
-  - čtvrtletně / čtyřikrát ročně → 3
-  - měsíčně → 1
-  - Use only wording related to the insurance period or premium cycle.
-  - Do NOT infer from contract duration (pojistná doba), discounts, auto-renewal clauses, or amendments unless they explicitly change the insurance period.
+  Length of one pojistné období in months.
+    pojistný rok / ročně → 12
+    pololetně            → 6
+    čtvrtletně           → 3
+    měsíčně              → 1
+    null if no explicit frequency stated.
+  Use only pojistné období wording. Never infer from contract duration or discounts.
 
-premium.currency:
-  - ISO 4217 code in lowercase (e.g. "czk", "eur", "usd")
+premium.currency: ISO 4217 lowercase (czk, eur, usd…)
 
 premium.isCollection:
-  - true  — broker collects the premium on behalf of the insurer (inkaso makléřem)
-  - false — policyholder pays the insurer directly
-  - use null only for amendments, otherwise default to false if not explicitly stated
+  true  — broker collects on behalf of insurer (inkaso makléřem)
+  false — policyholder pays insurer directly
+  null  — amendments only (unless explicitly changed)
+  Default false for main contracts if not stated.
 
 actionOnInsurancePeriodTermination:
-  - "auto-renewal"       — contract auto-renews (automatické prodloužení)
-  - "policy-termination" — contract terminates after the insurance period
-  - Set "auto-renewal" ONLY if the document explicitly states that the insurance automatically continues after the insurance period unless cancelled / unless notice is given.    automatically continues after the insurance period unless cancelled.
-  - Set "policy-termination" if the contract ends after the insurance period, even if it can be extended by amendment.
-  - Set "policy-termination" also when continuation requires an amendment, addendum, agreement of the parties, prolongation, or any explicit renewal step.
-    Phrases like "uplynutím pojistné doby pojištění zanikne", "nedohodnou-li se smluvní strany", "formou číslovaného dodatku", or "dohodly se na prolongaci pojistné doby" mean "policy-termination", not "auto-renewal".
+  "auto-renewal"       — contract automatically continues unless cancelled
+                         (must be EXPLICIT: "automaticky se prodlužuje", "automatické prodloužení")
+  "policy-termination" — contract ends after the period, even if it can be extended.
+  
+  CRITICAL distinction:
+  - "policy-termination" applies when: continuation requires an amendment, addendum,
+    agreement of the parties, prolongation, or any explicit step.
+  - Phrases like "uplynutím pojistné doby pojištění zanikne", "nedohodnou-li se strany",
+    "formou číslovaného dodatku", "dohodly se na prolongaci" → "policy-termination".
+  - Only set "auto-renewal" if the document says the contract renews AUTOMATICALLY
+    without any action required.
 
 noticePeriod:
-  - Notice period expressed as a hyphenated English string, e.g.:
-      "six-weeks", "two-months", "one-month", "three-months"
-  - JSON null if not specified (never output the string "None")
+  Hyphenated English string, e.g. "six-weeks", "two-months", "one-month", "three-months".
+  null if not explicitly stated.
 
-regPlate:
-  - Vehicle licence plate number (SPZ / registrační značka), null for non-vehicle insurance
+regPlate: SPZ / registrační značka; null for non-vehicle.
 
 latestEndorsementNumber:
-  - Highest amendment / endorsement ID mentioned anywhere across documents of the same contract.
-  - Extract even if the ID appears inside the main contract.
-  - IDs may appear as amendment numbers, endorsement numbers, "Dodatek", "Doložka", "DP", "amendment", "endorsement" or similar numbered change blocks.
-  - If multiple IDs are found, return the highest one.
-  - If none are found, return null.
+  Highest amendment/endorsement number found ANYWHERE across all documents for this contract.
+  Check for: "Dodatek", "Doložka", "DP", endorsement numbers, amendment IDs.
+  Return as string (e.g. "3"). null if none found.
 
 note:
-  - For the main contract: write a comprehensive summary of all special conditions,
-  - For amendments: summarise only the specific changes or declarations introduced by this amendment.
-  - JSON null if there are truly no special conditions worth noting.
+    Return one very short sentence for each unusual fact in the documents.
+    The language of the note must be the same as the document (usually Czech).
 
-=== DOCUMENTS ===
+    Examples of unusual facts:
+      - country/region excluded or restricted
+      - insured companies changed
+      - retroactive coverage
+      - sanctions-related restrictions
+      - any other clearly unusual contractual condition
+
+    Rules:
+      - Each fact must be its own sentence.
+      - Do NOT combine multiple facts in one sentence.
+      - Keep each sentence very short (max ~8 words).
+      - Ignore normal things (premium updates, payment schedules, standard amendments).
+
+    If nothing unusual appears → return null.
+
+uncertainty:
+  List of field names you are not fully confident about.
+  Include a field if ANY of the following apply:
+    - No clear verbatim evidence was found (value was inferred or implied)
+    - The document is ambiguous and another interpretation is plausible
+    - You returned null but suspect a value might exist
+    - The field requires interpreting a rule (not just finding text), and the
+      document wording is not completely unambiguous:
+        * actionOnInsurancePeriodTermination — include unless the document
+          explicitly uses "automaticky se prodlužuje" or explicit termination language
+        * contractRegime — include if you cannot point to explicit flotila/rámcová/
+          coinsurance language (i.e., you defaulted to "individual")
+        * installmentNumberPerInsurancePeriod / insurancePeriodMonths — include if
+          no explicit frequency keyword (ročně/pololetně/čtvrtletně/měsíčně) was found
+  Leave empty list (or null) if all extracted values are well-supported by explicit text.
+  Do NOT include fields that are always null for this document type (e.g. startAt for amendments).
+
+══════════════════════════════════════════════
+AGGREGATION (after per-document extraction)
+══════════════════════════════════════════════
+
+When the input contains a main contract + one or more amendments:
+- Start with main contract values as the base.
+- Apply each amendment in chronological order, overwriting ONLY the fields
+  that amendment explicitly changes.
+- latestEndorsementNumber: maximum amendmentNumber across ALL documents (as string).
+- The final output object represents the current merged state of the contract.
+
+══════════════════════════════════════════════
+DOCUMENTS
+══════════════════════════════════════════════
 
 {documents_block}
 
-=== REASONING ===
+══════════════════════════════════════════════
+OUTPUT FORMAT
+══════════════════════════════════════════════
 
-For every object in the output array, include a "reasoning" key whose value is a JSON object
-mapping each extracted field name to a 1–2 sentence explanation that cites verbatim text from
-the OCR document supporting the extracted value.
-For null fields in amendments, the reasoning must state why the field is null
-(e.g. "not mentioned in this amendment").
-
-=== OUTPUT ===
-Return a JSON array with one object per document, in the same order as the documents above.
-Each object must contain exactly the fields listed above, plus the "reasoning" dict.
-No markdown fences, no explanation — JSON array only.
-All absent/unknown fields must be JSON null, NEVER the string "None".
+JSON array, one object per document, same order as input.
+Each object contains exactly the fields above plus "reasoning".
+No markdown, no explanation outside the array.
+All absent/unknown fields: JSON null. NEVER the string "None".
 """
 
-PROMPT_INSURER_NAME = """You are an expert on insurance companies.
-Below is a list of insurer name variants extracted by OCR from different pages of an insurance contract.
-Some may be truncated, misspelled, or abbreviated due to OCR errors.
+PROMPT_INSURER_NAME = """You are an expert on Czech and European insurance companies.
 
-Select or reconstruct the single correct full legal name of the insurer.
+Below are insurer name variants extracted by OCR from the same insurance contract.
+They may contain truncations, abbreviations, OCR artifacts, or encoding errors.
+
+Your task: identify the single correct full legal name of the insurer.
+
+Rules:
+- Return the full legal name exactly as it would appear in the Czech commercial register
+  (e.g. "Generali Česká pojišťovna a.s.", "Allianz pojišťovna, a.s.", "Kooperativa pojišťovna, a.s., Vienna Insurance Group")
+- If multiple variants point to the same company, resolve to the canonical legal name
+- If a URL or domain is present (e.g. "generali.cz"), use it to identify the company
+- If variants are genuinely ambiguous, prefer the longest / most complete variant
+
 Return only the full legal name as a plain string — no JSON, no explanation, no quotes.
 
 Variants:
 {variants}
 """
 
-PROMPT_FIELDS_RECONCILIATION = """You are reconciling fields extracted from multiple insurance documents.
-Below are the per-document values for two fields, listed in document order:
 
-contractRegime values:
+PROMPT_FIELDS_RECONCILIATION = """You are reconciling two insurance contract fields that may differ across documents.
+
+Below are the per-document extracted values for:
+
+contractRegime:
 {regime_values}
 
-actionOnInsurancePeriodTermination values:
+actionOnInsurancePeriodTermination:
 {action_values}
 
-Task:
-1. For contractRegime:
-      - "individual"   — standard individual policy (individuální smlouva)
-      - "frame"        — framework agreement (rámcová smlouva) covering multiple individual policies under the same terms
-      - "fleet"        — fleet insurance (flotila) covering multiple vehicles under the same contract
-      - "coinsurance"  — if and only if two or more legal entities explicitly share the same insurance risk in the same document, e.g. via co-insurance / co-insurers or a lead insurer with participation shares; otherwise return "individual"
-                       - if one insurer is addressed by different name variants in different documents, but there is no explicit co-insurance language, return "individual" and let the insurerName consolidation step resolve the correct name.
-                       - if one or more documents do not include any insurer name at all assume "individual" unless there is explicit co-insurance language in any document.
-      - Return coinsurance only if the document explicitly states co-insurance / co-insurers or shows multiple insurers sharing the same risk (e.g., participation shares or a lead insurer); otherwise return individual
-2. For actionOnInsurancePeriodTermination:
-      - "auto-renewal"       — contract auto-renews (automatické prodloužení)
-      - "policy-termination" — contract terminates after the insurance period
-      - Set "auto-renewal" ONLY if the document explicitly states that the insurance automatically continues after the insurance period unless cancelled / unless notice is given.    automatically continues after the insurance period unless cancelled.
-      - Set "policy-termination" if the contract ends after the insurance period, even if it can be extended by amendment.
-      - Set "policy-termination" also when continuation requires an amendment, addendum, agreement of the parties, prolongation, or any explicit renewal step.
-        Phrases like "uplynutím pojistné doby pojištění zanikne", "nedohodnou-li se smluvní strany", "formou číslovaného dodatku", or "dohodly se na prolongaci pojistné doby" mean "policy-termination", not "auto-renewal".
+══════════════════════════════════════════════
+RECONCILIATION RULES
+══════════════════════════════════════════════
+
+contractRegime — pick the most specific value supported by any document:
+  "individual"   — standard individual policy (default; use when no other regime is explicit)
+  "frame"        — rámcová smlouva explicitly stated
+  "fleet"        — flotila / multiple vehicles explicitly stated
+  "coinsurance"  — ONLY when two or more legal entities explicitly share the same risk
+                   (co-insurers named, participation shares stated, lead insurer language present)
+  
+  DO NOT use "coinsurance" for:
+  - Different name variants of the same insurer across documents
+  - Documents that simply omit the insurer name
+  When in doubt → "individual"
+
+actionOnInsurancePeriodTermination — latest explicit statement wins:
+  "auto-renewal"       — ONLY if a document explicitly states the contract automatically
+                         continues unless notice is given / cancelled
+                         (e.g. "automaticky se prodlužuje", "automatické prodloužení")
+  "policy-termination" — contract ends after the period, OR continuation requires any
+                         explicit step (amendment, agreement, prolongation by any party)
+  
+  CRITICAL: these phrases mean "policy-termination", NOT "auto-renewal":
+  - "uplynutím pojistné doby pojištění zanikne"
+  - "nedohodnou-li se smluvní strany"
+  - "formou číslovaného dodatku"
+  - "dohodly se na prolongaci pojistné doby"
+  - any language requiring mutual agreement or a new document to continue
+  
+  If values conflict across documents, "policy-termination" takes precedence
+  unless a later document explicitly reinstates auto-renewal.
+  null only if no document mentions termination behaviour at all.
+
+══════════════════════════════════════════════
+DOCUMENTS
+══════════════════════════════════════════════
+
+{documents_block}
+
+══════════════════════════════════════════════
+OUTPUT
+══════════════════════════════════════════════
 
 Return a JSON object with exactly two keys:
   "contractRegime": one of "individual", "frame", "fleet", "coinsurance", or null
   "actionOnInsurancePeriodTermination": one of "auto-renewal", "policy-termination", or null
 
+No markdown fences, no explanation — JSON object only.
+"""
+
+
+PROMPT_VALIDATION = """You are a precise field extractor for Czech insurance contracts.
+
+The primary extractor flagged the following fields as uncertain:
+{uncertain_fields}
+
+Your task: extract ONLY these fields from the original documents below.
+Focus entirely on finding direct, explicit evidence for each field.
+Do not infer — if a field cannot be determined from explicit text, return null.
+
+{field_reference}
+
 === DOCUMENTS ===
 
 {documents_block}
 
-No markdown fences, no explanation — JSON object only.
-"""
-
-PROMPT_VALIDATION = """You are a strict fact-checker for Czech insurance contract data extraction.
-
-You will receive:
-1. Original OCR texts from one or more insurance documents.
-2. Per-document field extractions, each accompanied by the extractor's reasoning.
-3. The aggregated final contract state produced by merging all per-document extracts.
-
-Your task: verify every field in the aggregated result against the original source text.
-For each field whose value is INCORRECT, UNSUPPORTED, or AMBIGUOUS, provide a correction
-with verbatim evidence from the source documents.
-
-=== FIELD VERIFICATION RULES ===
-
-state
-  - "accepted" only for signed documents. If the document is a návrh / proposal and
-    lacks signatures or an acceptance clause, use "draft".
-  - "draft" only if the document is an unsigned proposal (návrh) or explicitly states it's a draft.
-  - "cancelled" only if explicit cancellation / termination language is present.
-
-assetType
-  - "vehicle" only if SPZ / vehicle registration appears in the document, or the document
-    explicitly covers a motor vehicle. Otherwise "other".
-  - "other" for all non-vehicle insurance types (liability, property, health, etc.)
-
-contractRegime
-  - "individual" if no explicit language indicates otherwise.
-  - "fleet" only if multiple vehicles or explicit fleet/flotila language is present.
-  - "frame" only if rámcová smlouva or equivalent is explicit.
-  - "coinsurance" only if multiple insurers are explicitly named.
-
-installmentNumberPerInsurancePeriod / insurancePeriodMonths
-  - Must be supported by explicit payment-frequency wording (ročně, pololetně, čtvrtletně, měsíčně).
-  - Reject values inferred from contract duration or amendment coverage period.
-
-actionOnInsurancePeriodTermination
-  - "auto-renewal" ONLY if the source explicitly states automatic continuation unless cancelled.
-  - "policy-termination" if the contract terminates after the period, or if renewal requires any
-    explicit step (amendment, agreement, prolongation).
-  - Phrases: "uplynutím pojistné doby pojištění zanikne", "formou číslovaného dodatku",
-    "dohodly se na prolongaci" → always "policy-termination".
-
-noticePeriod
-  - Must be stated explicitly (výpovědní lhůta / výpovědní doba). Return null if not found.
-  - Express as hyphenated English: "six-weeks", "two-months".
-
-regPlate
-  - Must appear verbatim in the source (SPZ / registrační značka format).
-
-latestEndorsementNumber
-  - Highest endorsement/amendment number mentioned anywhere across all documents, including the main contract and file names.
-
-concludedAs
-  - "broker" if Renomia or any makléř / broker reference appears. Typically "broker".
-  - "agent" if concluded directly with the insurer without broker involvement.
-
-=== ORIGINAL DOCUMENTS ===
-
-{documents_block}
-
-=== EXTRACTED VALUES WITH REASONING (per document) ===
-
-{extracts_block}
-
-=== AGGREGATED RESULT TO VERIFY ===
-
-{aggregated_json}
-
 === OUTPUT ===
-Return a JSON object with exactly two keys:
-  "corrections": an object where each key is a field name that required a correction.
-    Each value is an object with:
-      "original":  the value in the aggregated result (may be null)
-      "corrected": the corrected value (may be null if the field should be cleared)
-      "evidence":  verbatim quote from a source document that supports the correction
-  "result": the complete corrected FinalContract object with all corrections applied.
-    Fields not corrected must retain their aggregated values unchanged.
-
+Return a JSON object containing exactly the uncertain fields listed above.
+Each key is a field name; each value is the extracted value or null.
 No markdown fences, no explanation — JSON object only.
 """
 
-PROMPT_NOTE_CONSOLIDATION = """You are summarising Czech insurance contract notes.
-Below are note fragments extracted from different documents (main contract and amendments) that belong to the same insurance contract.
-They are separated by " | ".
 
-Produce a single consolidated note in Czech that combines all relevant information.
-Eliminate duplicates, preserve all unique facts (special conditions, coverage extensions, territorial scope, discounts, exclusions, declarations).
-Return only the consolidated note as plain text — no JSON, no explanation.
+PROMPT_NOTE_CONSOLIDATION = """You are consolidating insurance contract notes written in Czech.
+
+The fragments below were extracted from different documents (main contract and amendments)
+belonging to the same contract. They are separated by " | ".
+
+Your task: produce one consolidated note in Czech that:
+- Retains ALL unique facts: special conditions, coverage scope and extensions,
+  territorial limits, deductibles, exclusions, discounts, declarations, named insured parties
+- Removes exact duplicates, but keeps near-duplicates if the wording difference is meaningful
+- Where an amendment changes a condition from the main contract, state the amended version
+  and note it supersedes the original (e.g. "dle Dodatku č. 2: ...")
+- Uses clear, concise Czech — no bullet points, write in flowing sentences or short paragraphs
+
+Return only the consolidated note as plain text in target language — no JSON, no explanation, no labels.
 
 Notes:
 {notes}

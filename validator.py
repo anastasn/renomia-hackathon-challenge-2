@@ -1,4 +1,4 @@
-"""Post-aggregation LLM validation: fact-check aggregated fields against source documents."""
+"""Post-aggregation LLM validation: re-extract uncertain fields from raw OCR."""
 
 import json
 import logging
@@ -9,14 +9,34 @@ from prompts import PROMPT_VALIDATION
 
 log = logging.getLogger(__name__)
 
+_FIELD_RULES: dict[str, str] = {
+    "state": '"accepted" if signed/active, "draft" if návrh/unsigned, "cancelled" if explicitly terminated.',
+    "endAt": "DD.MM.YYYY or null. Must be null for 'na dobu neurčitou' / 'doba neurčitá' contracts.",
+    "startAt": "DD.MM.YYYY. Policy inception date (počátek pojištění). Zero-padded.",
+    "concludedAt": "DD.MM.YYYY. Contract signing date. Often same as startAt.",
+    "assetType": '"vehicle" only if SPZ / registrační značka appears or explicit motor vehicle language. Otherwise "other".',
+    "contractRegime": '"individual" default. "fleet" only if flotila/multiple vehicles explicit. "frame" only if rámcová smlouva explicit. "coinsurance" only if multiple insurers explicitly share the same risk.',
+    "actionOnInsurancePeriodTermination": '"auto-renewal" ONLY if contract explicitly states automatic continuation. "policy-termination" if any explicit step is required to continue.',
+    "installmentNumberPerInsurancePeriod": "ročně=1, pololetně=2, čtvrtletně=4, měsíčně=12. null if not explicitly stated.",
+    "insurancePeriodMonths": "pojistný rok/ročně=12, pololetně=6, čtvrtletně=3, měsíčně=1. null if not explicitly stated.",
+    "concludedAs": '"broker" if Renomia or makléř mentioned. "agent" if direct agent only.',
+    "premium.currency": "ISO 4217 lowercase (czk, eur…).",
+    "premium.isCollection": "true if inkaso makléřem. false if policyholder pays directly.",
+    "noticePeriod": 'Hyphenated English: "six-weeks", "two-months". null if not stated.',
+    "regPlate": "SPZ / registrační značka verbatim. null if not present.",
+    "latestEndorsementNumber": "Highest amendment/endorsement number anywhere in documents. Return as string.",
+    "contractNumber": "Contract/policy number (číslo smlouvy, číslo pojistky).",
+    "insurerName": "Full legal name of the insurer (pojistitel).",
+}
 
-def _build_extracts_block(extracts: list[ContractExtract]) -> str:
-    """Format per-document extracts (with reasoning) for the validation prompt."""
-    parts = []
-    for i, e in enumerate(extracts):
-        parts.append(f"--- Extract {i + 1} (documentType={e.documentType}) ---")
-        parts.append(json.dumps(e.model_dump(), ensure_ascii=False, indent=2))
-    return "\n".join(parts)
+
+def _build_field_reference(fields: list[str]) -> str:
+    lines = ["FIELD RULES (for the uncertain fields only):"]
+    for f in fields:
+        rule = _FIELD_RULES.get(f)
+        if rule:
+            lines.append(f"  {f}: {rule}")
+    return "\n".join(lines)
 
 
 def validate(
@@ -25,57 +45,47 @@ def validate(
     aggregated: FinalContract,
     gemini: Any,
 ) -> FinalContract:
-    """
-    Fact-check the aggregated contract against the source documents.
+    # Collect uncertain fields across all extracts (union, preserving order)
+    uncertain: list[str] = []
+    final_fields = set(FinalContract.model_fields)
+    seen: set[str] = set()
+    for e in extracts:
+        for f in (e.uncertainty or []):
+            if f in final_fields and f not in seen:
+                uncertain.append(f)
+                seen.add(f)
 
-    Asks Gemini to return only the fields that need correction. Corrections are
-    applied in Python on top of the aggregated result so unmentioned fields are
-    never touched.
-    """
+    if not uncertain:
+        log.warning("Validator: no uncertain fields — skipping LLM call")
+        return aggregated
+
+    log.warning("Validator: uncertain fields = %s", uncertain)
+
     documents_block = "\n\n".join(
         f"--- Document {i + 1}: {doc['filename']} ---\n{doc['ocr_text']}"
         for i, doc in enumerate(documents)
     )
-    extracts_block = _build_extracts_block(extracts)
-    aggregated_json = json.dumps(aggregated.model_dump(), ensure_ascii=False, indent=2)
 
     prompt = PROMPT_VALIDATION.format(
+        uncertain_fields=", ".join(uncertain),
+        field_reference=_build_field_reference(uncertain),
         documents_block=documents_block,
-        extracts_block=extracts_block,
-        aggregated_json=aggregated_json,
     )
 
     response = gemini.generate(
         prompt,
-        generation_config={
-            "response_mime_type": "application/json",
-            "temperature": 0.0,
-        },
+        generation_config={"response_mime_type": "application/json", "temperature": 0.0},
     )
 
     try:
-        raw = json.loads(response.text.strip())
-        corrections: dict = raw.get("corrections", {})
-        if not corrections:
-            return aggregated
-
-        # Apply only the corrected fields on top of the aggregated result
+        result = json.loads(response.text.strip())
+        log.warning("Validator result: %s", result)
         data = aggregated.model_dump()
-        final_fields = set(FinalContract.model_fields)
-        for field, correction in corrections.items():
-            if field not in final_fields:
-                continue
-            original = correction.get("original")
-            corrected = correction.get("corrected")
-            evidence = correction.get("evidence", "")
-            log.debug(
-                "Validator corrected %s: %r → %r | evidence: %s",
-                field, original, corrected, evidence,
-            )
-            data[field] = corrected
-
+        for field, value in result.items():
+            if field in final_fields and value != getattr(aggregated, field):
+                log.warning("Validator corrected %s: %r → %r", field, getattr(aggregated, field), value)
+                data[field] = value
         return FinalContract(**data)
-
     except Exception as exc:
-        log.warning("Validator output parse failed (%s); returning aggregated result unchanged.", exc)
+        log.warning("Validator parse failed (%s); returning aggregated unchanged.", exc)
         return aggregated

@@ -12,7 +12,7 @@ import os
 import threading
 import time
 
-import google.generativeai as genai
+import google.genai as genai
 import psycopg2
 from fastapi import FastAPI
 from loguru import logger as log
@@ -30,12 +30,11 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 class GeminiTracker:
     """Wrapper around Gemini that tracks token usage."""
-
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
         self.enabled = bool(api_key)
+        self.model_name = model_name
         if self.enabled:
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(model_name)
+            self.client = genai.Client(api_key=api_key)
         self.prompt_tokens = 0
         self.completion_tokens = 0
         self.total_tokens = 0
@@ -45,7 +44,11 @@ class GeminiTracker:
     def generate(self, prompt, **kwargs):
         if not self.enabled:
             raise RuntimeError("Gemini API key not configured")
-        response = self.model.generate_content(prompt, **kwargs)
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            **kwargs,
+        )
         with self._lock:
             self.request_count += 1
             meta = getattr(response, "usage_metadata", None)
