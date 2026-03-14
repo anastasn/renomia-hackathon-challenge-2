@@ -31,12 +31,7 @@ def refinement_node(state: PipelineState, gemini) -> dict:
     return {"refined": refined}
 
 
-def validation_node(state: PipelineState, gemini) -> dict:
-    validated = validate(state["documents"], state["extracts"], state["refined"], gemini)
-    return {"validated": validated}
-
-
-def run_pipeline(documents: list[dict], gemini_extract, gemini_validate, gemini_refine) -> FinalContract:
+def run_pipeline(documents: list[dict], gemini_extract, gemini_refine) -> FinalContract:
     state: PipelineState = {"documents": documents}
     state.update(extraction_node(state, gemini_extract))
     log.debug(f"Extracted {len(state['extracts'])} documents")
@@ -44,6 +39,4 @@ def run_pipeline(documents: list[dict], gemini_extract, gemini_validate, gemini_
     log.debug(f"Aggregated contract: {state['aggregated']}")
     state.update(refinement_node(state, gemini_refine))
     log.debug(f"Refined contract: {state['refined']}")
-    #state.update(validation_node(state, gemini_validate))
-    #log.debug(f"Validated contract: {state['validated']}")
     return state["refined"]

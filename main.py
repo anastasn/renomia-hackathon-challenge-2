@@ -289,12 +289,10 @@ def solve(payload: dict):
     #except Exception:
     #    pass  # Cache miss or DB unavailable — proceed with extraction
 
-    # --- Pipeline: extract → aggregate → validate → refine ----------------------
     log.debug(f"Running pipeline on {len(documents)} documents...")
     final = run_pipeline(
         documents,
         gemini_extract=gemini_pro,
-        gemini_validate=gemini_pro,
         gemini_refine=gemini,
     )
     log.debug("Pipeline complete.")
@@ -310,7 +308,6 @@ def solve(payload: dict):
     log.debug(f"Gemini Pro metrics: {gemini_pro.get_metrics()}")
     log.debug(f"Gemini metrics: {gemini.get_metrics()}")
 
-    # --- Cache write ------------------------------------------------------------
     #try:
     #    conn = get_db()
     #    cur = conn.cursor()

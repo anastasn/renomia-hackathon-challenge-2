@@ -69,15 +69,6 @@ def _to_gemini_schema(schema: dict, defs: dict) -> dict:
     return result
 
 
-# Build once at import time — the schema is static
-_pydantic_schema = ContractExtract.model_json_schema()
-_GEMINI_SCHEMA = _to_gemini_schema(_pydantic_schema, _pydantic_schema.get("$defs", {}))
-_BATCH_GEMINI_SCHEMA = {
-    "type": "array",
-    "items": _GEMINI_SCHEMA,
-}
-
-
 def extract_all_documents(documents: list[dict], gemini: Any) -> list[ContractExtract]:
     """
     Extract structured CRM fields from all documents in a single Gemini call.
@@ -104,15 +95,10 @@ def extract_all_documents(documents: list[dict], gemini: Any) -> list[ContractEx
                 thinking_level="MEDIUM",  # allow Gemini to "think" but keep latency reasonable
             ),
         ),
-        #generation_config={
-        #    "response_mime_type": "application/json",
-        #    "response_schema": _BATCH_GEMINI_SCHEMA,
-        #    "temperature": 0.0,  # deterministic output
-        #},
     )
     raw: str = response.text.strip()
 
-    # Strip markdown code fences — fallback for older model behaviour
+    # Strip markdown code fences 
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw.strip())
