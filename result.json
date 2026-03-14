@@ -1,0 +1,22 @@
+{
+  "contractNumber": "2050271756",
+  "insurerName": "Direct pojišťovna, a.s.",
+  "state": "draft",
+  "assetType": "vehicle",
+  "concludedAs": "broker",
+  "contractRegime": "individual",
+  "startAt": "02.06.2025",
+  "endAt": null,
+  "concludedAt": "02.06.2025",
+  "installmentNumberPerInsurancePeriod": 4,
+  "insurancePeriodMonths": 12,
+  "premium": {
+    "currency": "czk",
+    "isCollection": false
+  },
+  "actionOnInsurancePeriodTermination": "policy-termination",
+  "noticePeriod": null,
+  "regPlate": null,
+  "latestEndorsementNumber": null,
+  "note": null
+}

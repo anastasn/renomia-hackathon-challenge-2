@@ -1,0 +1,39 @@
+{
+  "id": 127,
+  "matches": false,
+  "summary": {
+    "mismatchCount": 6
+  },
+  "comparison": [
+    {
+      "field": "actionOnInsurancePeriodTermination",
+      "expected_output": "auto-renewal",
+      "result": "policy-termination"
+    },
+    {
+      "field": "annualPremiumTotal",
+      "expected_output": 5576,
+      "result": null
+    },
+    {
+      "field": "insuranceScope",
+      "expected_output": "Povinné ručení",
+      "result": null
+    },
+    {
+      "field": "liabilityLimitHealth",
+      "expected_output": 50000000,
+      "result": null
+    },
+    {
+      "field": "liabilityLimitProperty",
+      "expected_output": 50000000,
+      "result": null
+    },
+    {
+      "field": "state",
+      "expected_output": "cancelled",
+      "result": "draft"
+    }
+  ]
+}
