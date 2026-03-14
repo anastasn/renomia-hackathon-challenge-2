@@ -12,7 +12,6 @@ from loguru import logger as log
 from models import FinalContract, PipelineState
 from extractor import extract_all_documents
 from aggregator import aggregate
-from validator import validate
 from refiner import refine
 
 
@@ -27,7 +26,7 @@ def aggregation_node(state: PipelineState) -> dict:
 
 
 def refinement_node(state: PipelineState, gemini) -> dict:
-    refined = refine(state["aggregated"], state["extracts"], gemini, documents=state["documents"])
+    refined = refine(state["aggregated"], state["extracts"], gemini)
     return {"refined": refined}
 
 
