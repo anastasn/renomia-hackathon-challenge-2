@@ -129,9 +129,8 @@ def aggregate(extracts: list[ContractExtract]) -> FinalContract:
             candidates.append(str(e.amendmentNumber))
     result.latestEndorsementNumber = max(candidates, key=_endorsement_sort_key) if candidates else None
 
-    # Fallback: if no document explicitly set actionOnInsurancePeriodTermination, default to policy-termination
     if result.actionOnInsurancePeriodTermination is None:
-        result.actionOnInsurancePeriodTermination = "policy-termination"
+        result.actionOnInsurancePeriodTermination = "auto-renewal"
 
     if result.startAt is None and result.concludedAt is not None:
         result.startAt = result.concludedAt

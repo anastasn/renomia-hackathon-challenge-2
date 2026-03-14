@@ -50,33 +50,33 @@ def refine(final: FinalContract, extracts: list[ContractExtract], gemini: Any, *
 #        if refined_note:
 #            data["note"] = refined_note
 #
-    if documents:
-        regime_values = [e.contractRegime for e in extracts]
-        action_values = [e.actionOnInsurancePeriodTermination for e in extracts]
-        regime_lines = "\n".join(f"- {v}" for v in regime_values) if regime_values else "- (none)"
-        action_lines = "\n".join(f"- {v}" for v in action_values) if action_values else "- (none)"
-        documents_block = "\n\n".join(
-            f"--- Document {i + 1}: {doc['filename']} ---\n{doc['ocr_text']}"
-            for i, doc in enumerate(documents)
-        )
-        prompt = PROMPT_FIELDS_RECONCILIATION.format(
-            regime_values=regime_lines,
-            action_values=action_lines,
-            documents_block=documents_block,
-        )
-        response = gemini.generate(prompt,
-            config=GenerateContentConfig(
-                max_output_tokens=256,
-                temperature=0.1,  # low temperature for consistency
-            ),
-        )
-        try:
-            reconciled = json.loads(response.text.strip())
-            if reconciled.get("contractRegime"):
-                data["contractRegime"] = reconciled["contractRegime"]
-            if reconciled.get("actionOnInsurancePeriodTermination"):
-                data["actionOnInsurancePeriodTermination"] = reconciled["actionOnInsurancePeriodTermination"]
-        except (json.JSONDecodeError, AttributeError):
-            pass
+    #if documents:
+    #    regime_values = [e.contractRegime for e in extracts]
+    #    action_values = [e.actionOnInsurancePeriodTermination for e in extracts]
+    #    regime_lines = "\n".join(f"- {v}" for v in regime_values) if regime_values else "- (none)"
+    #    action_lines = "\n".join(f"- {v}" for v in action_values) if action_values else "- (none)"
+    #    documents_block = "\n\n".join(
+    #        f"--- Document {i + 1}: {doc['filename']} ---\n{doc['ocr_text']}"
+    #        for i, doc in enumerate(documents)
+    #    )
+    #    prompt = PROMPT_FIELDS_RECONCILIATION.format(
+    #        regime_values=regime_lines,
+    #        action_values=action_lines,
+    #        documents_block=documents_block,
+    #    )
+    #    response = gemini.generate(prompt,
+    #        config=GenerateContentConfig(
+    #            max_output_tokens=256,
+    #            temperature=0.1,  # low temperature for consistency
+    #        ),
+    #    )
+    #    try:
+    #        reconciled = json.loads(response.text.strip())
+    #        if reconciled.get("contractRegime"):
+    #            data["contractRegime"] = reconciled["contractRegime"]
+    #        if reconciled.get("actionOnInsurancePeriodTermination"):
+    #            data["actionOnInsurancePeriodTermination"] = reconciled["actionOnInsurancePeriodTermination"]
+    #    except (json.JSONDecodeError, AttributeError):
+    #        pass
 
     return FinalContract(**data)

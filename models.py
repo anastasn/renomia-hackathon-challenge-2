@@ -49,9 +49,9 @@ class ContractExtract(BaseModel):
     regPlate: str | None = None
     latestEndorsementNumber: str | None = None
     note: str | None = None
-    annualPremiumTotal: float | None = None
-    liabilityLimitHealth: float | None = None
-    liabilityLimitProperty: float | None = None
+    annualPremiumTotal: int | None = None
+    liabilityLimitHealth: int | None = None
+    liabilityLimitProperty: int | None = None
     insuranceScope: str | None = None
     reasoning: dict[str, str] | None = None
     uncertainty: list[str] | None = None
@@ -87,9 +87,9 @@ class FinalContract(BaseModel):
     regPlate: str | None = None
     latestEndorsementNumber: str | None = None
     note: str | None = None
-    annualPremiumTotal: float | None = None
-    liabilityLimitHealth: float | None = None
-    liabilityLimitProperty: float | None = None
+    annualPremiumTotal: int | None = None
+    liabilityLimitHealth: int | None = None
+    liabilityLimitProperty: int | None = None
     insuranceScope: str | None = None
 
 

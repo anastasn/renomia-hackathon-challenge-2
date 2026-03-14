@@ -250,9 +250,7 @@ contractRegime — pick the most specific value supported by any document:
   When in doubt → "individual"
 
 actionOnInsurancePeriodTermination — latest explicit statement wins:
-  "auto-renewal"       — ONLY if a document explicitly states the contract automatically
-                         continues unless notice is given / cancelled
-                         (e.g. "automaticky se prodlužuje", "automatické prodloužení")
+  "auto-renewal"       — contract automatically continues unless cancelled
   "policy-termination" — contract ends after the period, OR continuation requires any
                          explicit step (amendment, agreement, prolongation by any party)
   
