@@ -9,6 +9,9 @@ from models import ContractExtract
 from prompts import PROMPT_BATCH_EXTRACTION
 
 
+CONTEXT_LIMIT = 800_000   # 80 % of the 1 M token context window
+
+
 def _sanitise_none_strings(obj: Any) -> Any:
     """Recursively replace any string value exactly equal to "None" with None."""
     if isinstance(obj, dict):
@@ -69,22 +72,49 @@ def _to_gemini_schema(schema: dict, defs: dict) -> dict:
     return result
 
 
-def extract_all_documents(documents: list[dict], gemini: Any) -> list[ContractExtract]:
-    """
-    Extract structured CRM fields from all documents in a single Gemini call.
-
-    Args:
-        documents: List of {"filename": str, "ocr_text": str} dicts.
-        gemini:    GeminiTracker instance (configured in main.py).
-
-    Returns:
-        List of ContractExtract objects in the same order as the input documents.
-    """
+def _build_prompt(documents: list[dict]) -> str:
     documents_block = "\n\n".join(
         f"--- Document {i + 1}: {doc['filename']} ---\n{doc['ocr_text']}"
         for i, doc in enumerate(documents)
     )
-    prompt = PROMPT_BATCH_EXTRACTION.format(documents_block=documents_block)
+    return PROMPT_BATCH_EXTRACTION.format(documents_block=documents_block)
+
+
+def _count_tokens(gemini: Any, prompt: str) -> int:
+    """Exact token count via Gemini API (no generation cost)."""
+    resp = gemini.client.models.count_tokens(
+        model=gemini.model_name,
+        contents=prompt,
+    )
+    return resp.total_tokens
+
+
+def _parse_response(response) -> list[ContractExtract]:
+    raw: str = response.text.strip()
+
+    # Strip markdown code fences
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw.strip())
+
+    parsed = json.loads(raw)
+    return [
+        ContractExtract.model_validate(_sanitise_none_strings(item))
+        for item in parsed
+    ]
+
+
+def _extract_batch(documents: list[dict], gemini: Any) -> list[ContractExtract]:
+    """Extract from a batch of documents, recursively splitting if over context limit."""
+    prompt = _build_prompt(documents)
+    token_count = _count_tokens(gemini, prompt)
+
+    # Recursively split if prompt exceeds the context safety threshold
+    if token_count > CONTEXT_LIMIT and len(documents) > 1:
+        mid = len(documents) // 2
+        left = _extract_batch(documents[:mid], gemini)
+        right = _extract_batch(documents[mid:], gemini)
+        return left + right
 
     response = gemini.generate(
         prompt,
@@ -96,15 +126,21 @@ def extract_all_documents(documents: list[dict], gemini: Any) -> list[ContractEx
             ),
         ),
     )
-    raw: str = response.text.strip()
+    return _parse_response(response)
 
-    # Strip markdown code fences 
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw.strip())
 
-    parsed = json.loads(raw)
-    return [
-        ContractExtract.model_validate(_sanitise_none_strings(item))
-        for item in parsed
-    ]
+def extract_all_documents(documents: list[dict], gemini: Any) -> list[ContractExtract]:
+    """
+    Extract structured CRM fields from all documents.
+
+    Automatically splits into multiple Gemini calls if the combined prompt
+    exceeds the context window safety threshold (CONTEXT_LIMIT tokens).
+
+    Args:
+        documents: List of {"filename": str, "ocr_text": str} dicts.
+        gemini:    GeminiTracker instance (configured in main.py).
+
+    Returns:
+        List of ContractExtract objects in the same order as the input documents.
+    """
+    return _extract_batch(documents, gemini)
