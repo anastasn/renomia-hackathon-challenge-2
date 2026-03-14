@@ -1,0 +1,47 @@
+"""
+Pipeline node functions for the insurance contract extraction pipeline.
+
+Each node is a pure function (PipelineState, gemini) -> dict that returns
+a partial state update. This matches the LangGraph node contract:
+  graph.add_node("extract", lambda state: extraction_node(state, gemini))
+
+To adopt LangGraph, replace run_pipeline() with a StateGraph assembly.
+"""
+
+from loguru import logger as log
+from models import FinalContract, PipelineState
+from extractor import extract_all_documents
+from aggregator import aggregate
+from validator import validate
+from refiner import refine
+
+
+def extraction_node(state: PipelineState, gemini) -> dict:
+    extracts = extract_all_documents(state["documents"], gemini)
+    return {"extracts": extracts}
+
+
+def aggregation_node(state: PipelineState) -> dict:
+    aggregated = aggregate(state["extracts"])
+    return {"aggregated": aggregated}
+
+
+def validation_node(state: PipelineState, gemini) -> dict:
+    validated = validate(state["documents"], state["extracts"], state["aggregated"], gemini)
+    return {"validated": validated}
+
+
+def refinement_node(state: PipelineState, gemini) -> dict:
+    refined = refine(state["validated"], state["extracts"], gemini, documents=state["documents"])
+    return {"refined": refined}
+
+
+def run_pipeline(documents: list[dict], gemini_extract, gemini_validate, gemini_refine) -> FinalContract:
+    state: PipelineState = {"documents": documents}
+    state.update(extraction_node(state, gemini_extract))
+    state.update(aggregation_node(state))
+    log.debug(f"Aggregated contract: {state['aggregated']}")
+    state.update(validation_node(state, gemini_validate))
+    log.debug(f"Validated contract: {state['validated']}")
+    state.update(refinement_node(state, gemini_refine))
+    return state["refined"]

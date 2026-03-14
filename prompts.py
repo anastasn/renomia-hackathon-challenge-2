@@ -129,9 +129,17 @@ note:
 
 {documents_block}
 
+=== REASONING ===
+
+For every object in the output array, include a "reasoning" key whose value is a JSON object
+mapping each extracted field name to a 1–2 sentence explanation that cites verbatim text from
+the OCR document supporting the extracted value.
+For null fields in amendments, the reasoning must state why the field is null
+(e.g. "not mentioned in this amendment").
+
 === OUTPUT ===
 Return a JSON array with one object per document, in the same order as the documents above.
-Each object must contain exactly the fields listed above.
+Each object must contain exactly the fields listed above, plus the "reasoning" dict.
 No markdown fences, no explanation — JSON array only.
 All absent/unknown fields must be JSON null, NEVER the string "None".
 """
@@ -180,6 +188,86 @@ Return a JSON object with exactly two keys:
 === DOCUMENTS ===
 
 {documents_block}
+
+No markdown fences, no explanation — JSON object only.
+"""
+
+PROMPT_VALIDATION = """You are a strict fact-checker for Czech insurance contract data extraction.
+
+You will receive:
+1. Original OCR texts from one or more insurance documents.
+2. Per-document field extractions, each accompanied by the extractor's reasoning.
+3. The aggregated final contract state produced by merging all per-document extracts.
+
+Your task: verify every field in the aggregated result against the original source text.
+For each field whose value is INCORRECT, UNSUPPORTED, or AMBIGUOUS, provide a correction
+with verbatim evidence from the source documents.
+
+=== FIELD VERIFICATION RULES ===
+
+state
+  - "accepted" only for signed documents. If the document is a návrh / proposal and
+    lacks signatures or an acceptance clause, use "draft".
+  - "draft" only if the document is an unsigned proposal (návrh) or explicitly states it's a draft.
+  - "cancelled" only if explicit cancellation / termination language is present.
+
+assetType
+  - "vehicle" only if SPZ / vehicle registration appears in the document, or the document
+    explicitly covers a motor vehicle. Otherwise "other".
+  - "other" for all non-vehicle insurance types (liability, property, health, etc.)
+
+contractRegime
+  - "individual" if no explicit language indicates otherwise.
+  - "fleet" only if multiple vehicles or explicit fleet/flotila language is present.
+  - "frame" only if rámcová smlouva or equivalent is explicit.
+  - "coinsurance" only if multiple insurers are explicitly named.
+
+installmentNumberPerInsurancePeriod / insurancePeriodMonths
+  - Must be supported by explicit payment-frequency wording (ročně, pololetně, čtvrtletně, měsíčně).
+  - Reject values inferred from contract duration or amendment coverage period.
+
+actionOnInsurancePeriodTermination
+  - "auto-renewal" ONLY if the source explicitly states automatic continuation unless cancelled.
+  - "policy-termination" if the contract terminates after the period, or if renewal requires any
+    explicit step (amendment, agreement, prolongation).
+  - Phrases: "uplynutím pojistné doby pojištění zanikne", "formou číslovaného dodatku",
+    "dohodly se na prolongaci" → always "policy-termination".
+
+noticePeriod
+  - Must be stated explicitly (výpovědní lhůta / výpovědní doba). Return null if not found.
+  - Express as hyphenated English: "six-weeks", "two-months".
+
+regPlate
+  - Must appear verbatim in the source (SPZ / registrační značka format).
+
+latestEndorsementNumber
+  - Highest endorsement/amendment number mentioned anywhere across all documents, including the main contract and file names.
+
+concludedAs
+  - "broker" if Renomia or any makléř / broker reference appears. Typically "broker".
+  - "agent" if concluded directly with the insurer without broker involvement.
+
+=== ORIGINAL DOCUMENTS ===
+
+{documents_block}
+
+=== EXTRACTED VALUES WITH REASONING (per document) ===
+
+{extracts_block}
+
+=== AGGREGATED RESULT TO VERIFY ===
+
+{aggregated_json}
+
+=== OUTPUT ===
+Return a JSON object with exactly two keys:
+  "corrections": an object where each key is a field name that required a correction.
+    Each value is an object with:
+      "original":  the value in the aggregated result (may be null)
+      "corrected": the corrected value (may be null if the field should be cleared)
+      "evidence":  verbatim quote from a source document that supports the correction
+  "result": the complete corrected FinalContract object with all corrections applied.
+    Fields not corrected must retain their aggregated values unchanged.
 
 No markdown fences, no explanation — JSON object only.
 """

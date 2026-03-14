@@ -1,9 +1,17 @@
 """Contract aggregation: merge per-document extracts into a single FinalContract."""
 
+import re
+
 from models import ContractExtract, FinalContract, Premium
 
 # Fields that belong only to ContractExtract and must not be copied to FinalContract
-_METADATA_FIELDS = {"documentType", "amendmentNumber", "latestEndorsementNumber"}
+_METADATA_FIELDS = {"documentType", "amendmentNumber", "reasoning"}
+
+
+def _endorsement_sort_key(s: str) -> tuple:
+    """Sort key for endorsement IDs: integer prefix first, then lexicographic."""
+    m = re.match(r"(\d+)", s)
+    return (int(m.group(1)), s) if m else (0, s)
 
 
 def _merge_premium(base: Premium | None, override: Premium | None) -> Premium | None:
@@ -88,7 +96,7 @@ def aggregate(extracts: list[ContractExtract]) -> FinalContract:
     main_extracts = [e for e in extracts if e.documentType == "main"]
     amendments = sorted(
         [e for e in extracts if e.documentType == "amendment"],
-        key=lambda e: e.amendmentNumber or 0,
+        key=lambda e: e.amendmentNumber if e.amendmentNumber is not None else float("inf"),
     )
 
     if not main_extracts:
@@ -112,6 +120,15 @@ def aggregate(extracts: list[ContractExtract]) -> FinalContract:
     for amendment in amendments:
         result = _apply_amendment(result, amendment)
 
+    # Compute latestEndorsementNumber from all extracts (LLM-extracted + amendmentNumber)
+    candidates: list[str] = []
+    for e in extracts:
+        if e.latestEndorsementNumber:
+            candidates.append(e.latestEndorsementNumber)
+        if e.amendmentNumber is not None:
+            candidates.append(str(e.amendmentNumber))
+    result.latestEndorsementNumber = max(candidates, key=_endorsement_sort_key) if candidates else None
+
     # Fallback: if no document explicitly set actionOnInsurancePeriodTermination, default to policy-termination
     if result.actionOnInsurancePeriodTermination is None:
         result.actionOnInsurancePeriodTermination = "policy-termination"
@@ -119,5 +136,11 @@ def aggregate(extracts: list[ContractExtract]) -> FinalContract:
     # Fallback: if no document explicitly set installmentNumberPerInsurancePeriod, default to 1
     if result.installmentNumberPerInsurancePeriod is None:
         result.installmentNumberPerInsurancePeriod = 1
+
+    if result.startAt is None and result.concludedAt is not None:
+        result.startAt = result.concludedAt
+
+    if result.concludedAt is None and result.startAt is not None:
+        result.concludedAt = result.startAt
 
     return result

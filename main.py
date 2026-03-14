@@ -5,6 +5,7 @@ Input:  OCR text from insurance contract documents (main contract + amendments)
 Output: Structured CRM fields extracted from the documents
 """
 
+from pathlib import Path
 import hashlib
 import json
 import os
@@ -17,9 +18,7 @@ from fastapi import FastAPI
 from loguru import logger as log
 import uvicorn
 
-from aggregator import aggregate
-from extractor import extract_all_documents
-from refiner import refine
+from pipeline import run_pipeline
 
 app = FastAPI(title="Challenge 2: Document Data Extraction")
 
@@ -74,6 +73,7 @@ class GeminiTracker:
 
 
 gemini = GeminiTracker(GEMINI_API_KEY)
+gemini_pro = GeminiTracker(GEMINI_API_KEY, model_name="gemini-3.1-pro-preview")
 
 
 def get_db():
@@ -116,6 +116,33 @@ def reset_metrics():
     gemini.reset()
     return {"status": "reset"}
 
+DATASET_PATH = Path(__file__).parent / "data.json"
+
+def _load_documents_from_fixture(input_id: int | str) -> list[dict]:
+    """
+        Load a sample input from data.json by its case id.
+
+        The fixture file is expected to be a JSON array where each item contains:
+        
+    id
+    input.documents"""
+    try:
+        normalized_id = int(input_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Payload field 'input' must be an integer test case id.") from exc
+
+    with DATASET_PATH.open(encoding="utf-8") as fixture_file:
+        fixtures = json.load(fixture_file)
+
+    for fixture in fixtures:
+        if fixture.get("id") == normalized_id:
+            payload = fixture.get("input", {})
+            documents = payload.get("documents", [])
+            if not isinstance(documents, list):
+                raise ValueError(f"Fixture {normalized_id} has invalid 'documents' data.")
+            return documents
+
+    raise ValueError(f"Input fixture with id {normalized_id} was not found in {DATASET_PATH.name}.")
 
 @app.post("/solve")
 def solve(payload: dict):
@@ -133,6 +160,8 @@ def solve(payload: dict):
     4. Persist the result to the cache and return it.
     """
     documents: list[dict] = payload.get("documents", [])
+    if not documents:
+        documents = _load_documents_from_fixture(payload.get("input", 0))
 
     # --- Cache lookup -----------------------------------------------------------
     # Key is an MD5 hash of the sorted (filename, ocr_text) pairs so that
@@ -159,28 +188,21 @@ def solve(payload: dict):
     #except Exception:
     #    pass  # Cache miss or DB unavailable — proceed with extraction
 
-    # --- Per-document extraction ------------------------------------------------
-    log.debug(f"Extracting data from {len(documents)} documents...")
-
-    extracts = extract_all_documents(documents, gemini)
-
-    log.debug(f"Extracted {len(extracts)} documents, starting aggregation...")
-
-    # --- Debug logging of extracts (can be removed in production) ----------------
-    for i, extract in enumerate(extracts):
-        log.debug(f"Extract for document {i} ({documents[i]['filename']}): {extract.model_dump()}")
-
-    # --- Aggregation ------------------------------------------------------------
-    final = aggregate(extracts)
-
-    # --- Refinement (LLM post-processing) ---------------------------------------
-    log.debug("Refining aggregated result with LLM post-processing...")
-    final = refine(final, extracts, gemini)
-    log.debug("Refinement complete.")
+    # --- Pipeline: extract → aggregate → validate → refine ----------------------
+    log.debug(f"Running pipeline on {len(documents)} documents...")
+    final = run_pipeline(
+        documents,
+        gemini_extract=gemini_pro,
+        gemini_validate=gemini_pro,
+        gemini_refine=gemini,
+    )
+    log.debug("Pipeline complete.")
 
     result = final.model_dump()
 
     log.debug(f"Aggregated result: {result}")
+    log.debug(f"Gemini Pro metrics: {gemini_pro.get_metrics()}")
+    log.debug(f"Gemini metrics: {gemini.get_metrics()}")
 
     # --- Cache write ------------------------------------------------------------
     #try:

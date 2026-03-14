@@ -1,6 +1,6 @@
 """Pydantic v2 data models for the insurance contract extraction pipeline."""
 
-from typing import Literal
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict
 
@@ -49,6 +49,7 @@ class ContractExtract(BaseModel):
     regPlate: str | None = None
     latestEndorsementNumber: str | None = None
     note: str | None = None
+    reasoning: dict[str, str] | None = None
 
 
 class FinalContract(BaseModel):
@@ -81,3 +82,28 @@ class FinalContract(BaseModel):
     regPlate: str | None = None
     latestEndorsementNumber: str | None = None
     note: str | None = None
+
+
+class PipelineState(TypedDict, total=False):
+    """LangGraph-ready state carrier for the extraction pipeline."""
+
+    documents: list[dict]           # input: [{filename, ocr_text}, ...]
+    extracts: list["ContractExtract"]  # after extraction node
+    aggregated: FinalContract       # after aggregation node
+    validated: FinalContract        # after validation node
+    refined: FinalContract          # after refinement node
+
+
+class FieldCorrection(BaseModel):
+    """A single field correction produced by the validator."""
+
+    original: str | int | bool | None
+    corrected: str | int | bool | None
+    evidence: str  # verbatim quote from source document
+
+
+class ValidationOutput(BaseModel):
+    """Structured output from the validator LLM call."""
+
+    corrections: dict[str, FieldCorrection] = {}
+    result: FinalContract
