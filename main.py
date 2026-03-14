@@ -14,6 +14,7 @@ import time
 import google.generativeai as genai
 import psycopg2
 from fastapi import FastAPI
+from loguru import logger as log
 import uvicorn
 
 from aggregator import aggregate
@@ -163,9 +164,15 @@ def solve(payload: dict):
         for doc in documents
     ]
 
+    # --- Debug logging of extracts (can be removed in production) ----------------
+    for i, extract in enumerate(extracts):
+        log.debug(f"Extract for document {i} ({documents[i]['filename']}): {extract.model_dump()}")
+
     # --- Aggregation ------------------------------------------------------------
     final = aggregate(extracts)
     result = final.model_dump()
+
+    log.debug(f"Aggregated result: {result}")
 
     # --- Cache write ------------------------------------------------------------
     try:
