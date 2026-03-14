@@ -37,9 +37,19 @@ insurerName:
   Specifically for URL you are allowed to infer the insurer name from the domain (e.g. "generali.cz" → "Generali Česká pojišťovna a.s.").
 
 state:
-  "accepted"  — signed/active (default for signed documents)
-  "cancelled" — zrušena / vypovězena
-  "draft"     — unsigned / návrh
+  "accepted"  — issued/active policy document
+  "cancelled" — explicitly cancelled/terminated/voided, or an unpaid pay-to-conclude policy that did not clearly come into effect
+  "draft"     — mere proposal/offer only
+
+  Rules for state:
+    - Return "draft" ONLY for a pure proposal/offer, not for a full policy document.
+    - Return "cancelled" if the document explicitly says the insurance/contract was cancelled, terminated, voided, or did not arise.
+    - For Direct-style pay-to-conclude documents ("Pojistná smlouva bude uzavřena zaplacením pojistného"), do NOT automatically return accepted.
+    - If the document is a full policy document but effectiveness depends on payment, use this tie-breaker:
+    - return "accepted" if the document looks like a standard issued policy pack arranged in advance(e.g. "Datum sjednání pojištění" is earlier than "Datum požadovaného počátku pojištění");
+    - return "cancelled" if the document still depends on payment and there is no clear evidence the policy actually came into effect, especially when the requested start is the same day as arrangement or the text frames the policy as still pending until payment.
+    - If there is no explicit evidence of actual effectiveness, prefer "cancelled" over "accepted" for pay-to-conclude wording that keeps contract formation conditional.
+    - If the contract duration is stated as "na dobu neurčitou", classify the state as "accepted".
 
 assetType:
   "vehicle" — motor vehicle (SPZ / vozidlo / automobil present)

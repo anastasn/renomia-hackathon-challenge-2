@@ -31,9 +31,12 @@ def refinement_node(state: PipelineState, gemini) -> dict:
     return {"refined": refined}
 
 
-def run_pipeline(documents: list[dict], gemini_extract, gemini_refine) -> FinalContract:
+def run_pipeline(documents: list[dict], gemini_extract, gemini_refine, extracts=None) -> FinalContract:
     state: PipelineState = {"documents": documents}
-    state.update(extraction_node(state, gemini_extract))
+    if extracts is not None:
+        state["extracts"] = extracts
+    else:
+        state.update(extraction_node(state, gemini_extract))
     log.debug(f"Extracted {len(state['extracts'])} documents")
     state.update(aggregation_node(state))
     log.debug(f"Aggregated contract: {state['aggregated']}")

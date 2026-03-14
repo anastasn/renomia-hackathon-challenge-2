@@ -21,6 +21,8 @@ from loguru import logger as log
 import uvicorn
 
 from pipeline import run_pipeline
+from extractor import extract_all_documents
+from models import ContractExtract
 
 app = FastAPI(title="Challenge 2: Document Data Extraction")
 
@@ -264,10 +266,8 @@ def solve(payload: dict):
         documents = _load_documents_from_fixture(fixture_id)
         used_fixture = True
 
-    # --- Cache lookup -----------------------------------------------------------
-    # Key is an MD5 hash of the sorted (filename, ocr_text) pairs so that
-    # document order in the request does not affect cache hits.
-    cache_key = hashlib.md5(
+    # Layer 1: full-result cache
+    result_key = "result:" + hashlib.md5(
         json.dumps(
             sorted(
                 [{"f": d["filename"], "t": d["ocr_text"]} for d in documents],
@@ -278,23 +278,66 @@ def solve(payload: dict):
     ).hexdigest()
 
     try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT value FROM cache WHERE key = %s", (cache_key,))
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
+        conn = get_db(); cur = conn.cursor()
+        cur.execute("SELECT value FROM cache WHERE key = %s", (result_key,))
+        row = cur.fetchone(); cur.close(); conn.close()
         if row:
             cached = row[0]
             return cached
     except Exception:
-        pass  # Cache miss or DB unavailable — proceed with extraction
+        pass
 
-    log.debug(f"Running pipeline on {len(documents)} documents...")
+    # Layer 2: per-document extract cache
+    doc_extracts: list = [None] * len(documents)
+    try:
+        conn = get_db(); cur = conn.cursor()
+        for i, doc in enumerate(documents):
+            doc_key = "extract:" + hashlib.md5(
+                json.dumps({"f": doc["filename"], "t": doc["ocr_text"]},
+                           ensure_ascii=False).encode()
+            ).hexdigest()
+            cur.execute("SELECT value FROM cache WHERE key = %s", (doc_key,))
+            row = cur.fetchone()
+            if row:
+                try:
+                    doc_extracts[i] = ContractExtract.model_validate(row[0])
+                except Exception:
+                    pass  # corrupted entry → treat as cache miss
+        cur.close(); conn.close()
+    except Exception:
+        pass  # DB error → extract everything
+
+    uncached_indices = [i for i, e in enumerate(doc_extracts) if e is None]
+
+    if uncached_indices:
+        uncached_docs = [documents[i] for i in uncached_indices]
+        new_extracts = extract_all_documents(uncached_docs, gemini_pro)
+        try:
+            conn = get_db(); cur = conn.cursor()
+            for idx, extract in zip(uncached_indices, new_extracts):
+                doc_key = "extract:" + hashlib.md5(
+                    json.dumps({"f": documents[idx]["filename"], "t": documents[idx]["ocr_text"]},
+                               ensure_ascii=False).encode()
+                ).hexdigest()
+                cur.execute(
+                    "INSERT INTO cache (key, value) VALUES (%s, %s) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                    (doc_key, json.dumps(extract.model_dump()))
+                )
+                doc_extracts[idx] = extract
+            conn.commit(); cur.close(); conn.close()
+        except Exception:
+            for idx, extract in zip(uncached_indices, new_extracts):
+                doc_extracts[idx] = extract
+
+    all_extracts = [e for e in doc_extracts if e is not None]
+
+    log.debug(f"Running pipeline on {len(documents)} documents ({len(uncached_indices)} freshly extracted)...")
     final = run_pipeline(
         documents,
         gemini_extract=gemini_pro,
         gemini_refine=gemini,
+        extracts=all_extracts,
     )
     log.debug("Pipeline complete.")
 
@@ -310,20 +353,15 @@ def solve(payload: dict):
     log.debug(f"Gemini metrics: {gemini.get_metrics()}")
 
     try:
-        conn = get_db()
-        cur = conn.cursor()
+        conn = get_db(); cur = conn.cursor()
         cur.execute(
-            """
-            INSERT INTO cache (key, value) VALUES (%s, %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-            """,
-            (cache_key, json.dumps(result)),
+            "INSERT INTO cache (key, value) VALUES (%s, %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (result_key, json.dumps(result)),
         )
-        conn.commit()
-        cur.close()
-        conn.close()
+        conn.commit(); cur.close(); conn.close()
     except Exception:
-        pass  # Non-fatal — result is still returned to the caller
+        pass
 
     return result
 
