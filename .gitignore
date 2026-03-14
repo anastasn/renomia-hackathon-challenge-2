@@ -1,0 +1,5 @@
+.env*
+!.env.example
+data/
+data.json
+CLAUDE.md

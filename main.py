@@ -5,6 +5,8 @@ Input:  OCR text from insurance contract documents (main contract + amendments)
 Output: Structured CRM fields extracted from the documents
 """
 
+import hashlib
+import json
 import os
 import threading
 import time
@@ -13,6 +15,9 @@ import google.generativeai as genai
 import psycopg2
 from fastapi import FastAPI
 import uvicorn
+
+from aggregator import aggregate
+from extractor import extract_document
 
 app = FastAPI(title="Challenge 2: Document Data Extraction")
 
@@ -25,7 +30,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 class GeminiTracker:
     """Wrapper around Gemini that tracks token usage."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
         self.enabled = bool(api_key)
         if self.enabled:
             genai.configure(api_key=api_key)
@@ -115,81 +120,69 @@ def solve(payload: dict):
     """
     Extract structured CRM fields from insurance contract documents.
 
-    Input example:
-    {
-        "documents": [
-            {
-                "filename": "smlouva_hlavni.pdf",
-                "ocr_text": "... OCR extracted text of main contract ..."
-            },
-            {
-                "filename": "dodatek_1.pdf",
-                "ocr_text": "... OCR text of amendment 1 ..."
-            },
-            {
-                "filename": "dodatek_2.pdf",
-                "ocr_text": "... OCR text of amendment 2 ..."
-            }
-        ]
-    }
-
-    Expected output (all fields from CRM template):
-    {
-        "contractNumber": "POJ-2024-12345",
-        "insurerName": "Generali Česká pojišťovna a.s.",
-        "state": "accepted",              // enum: draft | accepted | cancelled
-        "assetType": "other",              // enum: other | vehicle
-        "concludedAs": "broker",           // enum: agent | broker
-        "contractRegime": "individual",    // enum: individual | frame | fleet | coinsurance
-        "startAt": "01.01.2024",           // DD.MM.YYYY
-        "endAt": null,                     // DD.MM.YYYY or null (doba neurčitá)
-        "concludedAt": "15.12.2023",       // DD.MM.YYYY
-        "installmentNumberPerInsurancePeriod": 4,  // 1=yearly, 2=semi, 4=quarterly, 12=monthly
-        "insurancePeriodMonths": 12,       // 12=yearly, 6=semi, 3=quarterly, 1=monthly
-        "premium": {
-            "currency": "czk",             // ISO 4217 lowercase
-            "isCollection": false          // true if broker collects premium
-        },
-        "actionOnInsurancePeriodTermination": "auto-renewal",  // auto-renewal | policy-termination
-        "noticePeriod": "six-weeks",       // enum or null
-        "regPlate": null,                  // only for vehicle insurance
-        "latestEndorsementNumber": "3",    // string, highest amendment number or null
-        "note": null                       // special conditions summary or null
-    }
+    Pipeline:
+    1. Check the PostgreSQL cache — if this exact set of documents was seen
+       before, return the cached result immediately.
+    2. Extract each document independently via Gemini (extractor.py).
+    3. Merge all extracts into the final contract state (aggregator.py):
+       - Main contract provides the base values.
+       - Amendments are applied in order; non-null fields override the base.
+       - latestEndorsementNumber is computed as the highest amendment number.
+    4. Persist the result to the cache and return it.
     """
-    # TODO: Implement your solution here
-    #
-    # Suggested approach:
-    # 1. Concatenate OCR text from all documents (main contract + amendments)
-    # 2. Send to Gemini with a structured extraction prompt
-    # 3. Parse the response into the expected field format
-    # 4. For amendments: use the latest values (amendments override base contract)
-    # 5. For latestEndorsementNumber: find the highest amendment number
+    documents: list[dict] = payload.get("documents", [])
 
-    documents = payload.get("documents", [])
+    # --- Cache lookup -----------------------------------------------------------
+    # Key is an MD5 hash of the sorted (filename, ocr_text) pairs so that
+    # document order in the request does not affect cache hits.
+    cache_key = hashlib.md5(
+        json.dumps(
+            sorted(
+                [{"f": d["filename"], "t": d["ocr_text"]} for d in documents],
+                key=lambda x: x["f"],
+            ),
+            ensure_ascii=False,
+        ).encode()
+    ).hexdigest()
 
-    result = {
-        "contractNumber": None,
-        "insurerName": None,
-        "state": "accepted",
-        "assetType": "other",
-        "concludedAs": "broker",
-        "contractRegime": "individual",
-        "startAt": None,
-        "endAt": None,
-        "concludedAt": None,
-        "installmentNumberPerInsurancePeriod": 1,
-        "insurancePeriodMonths": 12,
-        "premium": {
-            "currency": "czk",
-            "isCollection": False,
-        },
-        "actionOnInsurancePeriodTermination": "auto-renewal",
-        "noticePeriod": None,
-        "regPlate": None,
-        "latestEndorsementNumber": None,
-        "note": None,
-    }
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM cache WHERE key = %s", (cache_key,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            return row[0]
+    except Exception:
+        pass  # Cache miss or DB unavailable — proceed with extraction
+
+    # --- Per-document extraction ------------------------------------------------
+    extracts = [
+        extract_document(doc["ocr_text"], doc["filename"], gemini)
+        for doc in documents
+    ]
+
+    # --- Aggregation ------------------------------------------------------------
+    final = aggregate(extracts)
+    result = final.model_dump()
+
+    # --- Cache write ------------------------------------------------------------
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO cache (key, value) VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            (cache_key, json.dumps(result)),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception:
+        pass  # Non-fatal — result is still returned to the caller
 
     return result
 
