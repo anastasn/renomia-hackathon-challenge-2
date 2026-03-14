@@ -18,7 +18,7 @@ from loguru import logger as log
 import uvicorn
 
 from aggregator import aggregate
-from extractor import extract_document
+from extractor import extract_all_documents
 from refiner import refine
 
 app = FastAPI(title="Challenge 2: Document Data Extraction")
@@ -162,10 +162,7 @@ def solve(payload: dict):
     # --- Per-document extraction ------------------------------------------------
     log.debug(f"Extracting data from {len(documents)} documents...")
 
-    extracts = [
-        extract_document(doc["ocr_text"], doc["filename"], gemini)
-        for doc in documents
-    ]
+    extracts = extract_all_documents(documents, gemini)
 
     log.debug(f"Extracted {len(extracts)} documents, starting aggregation...")
 

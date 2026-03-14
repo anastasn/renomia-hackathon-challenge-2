@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from models import ContractExtract
-from prompts import SYSTEM_PROMPT_EXTRACTION
+from prompts import PROMPT_BATCH_EXTRACTION
 
 
 def _sanitise_none_strings(obj: Any) -> Any:
@@ -71,35 +71,35 @@ def _to_gemini_schema(schema: dict, defs: dict) -> dict:
 # Build once at import time — the schema is static
 _pydantic_schema = ContractExtract.model_json_schema()
 _GEMINI_SCHEMA = _to_gemini_schema(_pydantic_schema, _pydantic_schema.get("$defs", {}))
+_BATCH_GEMINI_SCHEMA = {
+    "type": "array",
+    "items": _GEMINI_SCHEMA,
+}
 
 
-def extract_document(ocr_text: str, filename: str, gemini: Any) -> ContractExtract:
+def extract_all_documents(documents: list[dict], gemini: Any) -> list[ContractExtract]:
     """
-    Extract structured CRM fields from a single insurance document.
-
-    Sends the OCR text to Gemini with a structured extraction prompt and
-    parses the JSON response into a ContractExtract model.
+    Extract structured CRM fields from all documents in a single Gemini call.
 
     Args:
-        ocr_text: Raw OCR text of the document.
-        filename: Original filename — used as a hint for document type detection.
-        gemini:   GeminiTracker instance (configured in main.py).
+        documents: List of {"filename": str, "ocr_text": str} dicts.
+        gemini:    GeminiTracker instance (configured in main.py).
 
     Returns:
-        ContractExtract with all available fields populated; missing fields
-        default to None.
-
-    Raises:
-        ValueError: If the LLM response cannot be parsed as valid JSON or does
-                    not conform to the ContractExtract schema.
+        List of ContractExtract objects in the same order as the input documents.
     """
-    prompt = SYSTEM_PROMPT_EXTRACTION.format(filename=filename, ocr_text=ocr_text)
+    documents_block = "\n\n".join(
+        f"--- Document {i + 1}: {doc['filename']} ---\n{doc['ocr_text']}"
+        for i, doc in enumerate(documents)
+    )
+    prompt = PROMPT_BATCH_EXTRACTION.format(documents_block=documents_block)
 
     response = gemini.generate(
         prompt,
         generation_config={
             "response_mime_type": "application/json",
-            "response_schema": _GEMINI_SCHEMA,
+            "response_schema": _BATCH_GEMINI_SCHEMA,
+            "temperature": 0.0,  # deterministic output
         },
     )
     raw: str = response.text.strip()
@@ -109,6 +109,8 @@ def extract_document(ocr_text: str, filename: str, gemini: Any) -> ContractExtra
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw.strip())
 
-    # Sanitise "None" strings before validation
-    parsed = _sanitise_none_strings(json.loads(raw))
-    return ContractExtract.model_validate(parsed)
+    parsed = json.loads(raw)
+    return [
+        ContractExtract.model_validate(_sanitise_none_strings(item))
+        for item in parsed
+    ]
