@@ -23,7 +23,7 @@ class ContractExtract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Document metadata (stripped before producing FinalContract)
-    documentType: Literal["main", "amendment"]
+    documentType: Literal["main", "amendment", "terms"]
     amendmentNumber: int | None = None
 
     # CRM fields
@@ -43,7 +43,7 @@ class ContractExtract(BaseModel):
 
     premium: Premium | None = None
 
-    actionOnInsurancePeriodTermination: Literal["auto-renewal", "policy-termination"] | None = None
+    actionOnInsurancePeriodTermination: Literal["auto-renewal", "policy-termination"] = "policy-termination"
     noticePeriod: str | None = None
 
     regPlate: str | None = None

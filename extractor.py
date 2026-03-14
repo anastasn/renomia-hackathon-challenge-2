@@ -1,10 +1,22 @@
 """Per-document LLM extraction using Gemini."""
 
+import json
 import re
 from typing import Any
 
 from models import ContractExtract
 from prompts import SYSTEM_PROMPT_EXTRACTION
+
+
+def _sanitise_none_strings(obj: Any) -> Any:
+    """Recursively replace any string value exactly equal to "None" with None."""
+    if isinstance(obj, dict):
+        return {k: _sanitise_none_strings(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitise_none_strings(v) for v in obj]
+    if obj == "None":
+        return None
+    return obj
 
 
 def _to_gemini_schema(schema: dict, defs: dict) -> dict:
@@ -97,5 +109,6 @@ def extract_document(ocr_text: str, filename: str, gemini: Any) -> ContractExtra
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw.strip())
 
-    # model_validate_json handles all coercion, including the nested Premium object
-    return ContractExtract.model_validate_json(raw)
+    # Sanitise "None" strings before validation
+    parsed = _sanitise_none_strings(json.loads(raw))
+    return ContractExtract.model_validate(parsed)

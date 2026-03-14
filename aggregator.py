@@ -44,6 +44,15 @@ def _apply_amendment(base: FinalContract, amendment: ContractExtract) -> FinalCo
         if field == "premium":
             merged = _merge_premium(base.premium, amendment.premium)
             data["premium"] = merged.model_dump() if merged is not None else None
+        elif field == "note":
+            # Concatenate notes from all layers so context is preserved
+            base_note = base.note
+            amendment_note = getattr(amendment, "note", None)
+            if base_note and amendment_note:
+                data["note"] = f"{base_note} | {amendment_note}"
+            elif amendment_note:
+                data["note"] = amendment_note
+            # else: keep base_note (already in data)
         else:
             value = getattr(amendment, field, None)
             if value is not None:
@@ -56,13 +65,15 @@ def aggregate(extracts: list[ContractExtract]) -> FinalContract:
     """
     Merge all per-document extracts into the final contract state.
 
+    Priority (lowest → highest):
+      terms (VPP) → main contract → amendments (ascending by number)
+
     Algorithm:
-    1. Identify the main contract extract (documentType == "main").
-    2. Collect amendments and sort them by amendmentNumber ascending so that
-       later amendments correctly override earlier ones.
-    3. Apply amendments sequentially to build the latest contract state.
-    4. Compute latestEndorsementNumber as the string of the highest
-       amendmentNumber found across all documents (or null if none).
+    1. Seed the result from the terms document (VPP), if present.
+    2. Apply the main contract on top — its non-null fields override terms.
+    3. Apply amendments sequentially in ascending order — each overrides the
+       accumulated state so far.
+    4. Compute latestEndorsementNumber as the highest amendmentNumber found.
 
     Args:
         extracts: Per-document ContractExtract results (any order).
@@ -73,6 +84,7 @@ def aggregate(extracts: list[ContractExtract]) -> FinalContract:
     Raises:
         ValueError: If no main contract document is found in the extracts.
     """
+    terms_extracts = [e for e in extracts if e.documentType == "terms"]
     main_extracts = [e for e in extracts if e.documentType == "main"]
     amendments = sorted(
         [e for e in extracts if e.documentType == "amendment"],
@@ -85,14 +97,18 @@ def aggregate(extracts: list[ContractExtract]) -> FinalContract:
             "classified as documentType='main'."
         )
 
-    main = main_extracts[0]
+    # Seed from terms (lowest priority) if present, otherwise start empty
+    if terms_extracts:
+        result = FinalContract(
+            **{k: v for k, v in terms_extracts[0].model_dump().items() if k not in _METADATA_FIELDS}
+        )
+    else:
+        result = FinalContract()
 
-    # Seed the result from the main contract, stripping document metadata
-    result = FinalContract(
-        **{k: v for k, v in main.model_dump().items() if k not in _METADATA_FIELDS}
-    )
+    # Main contract overrides terms
+    result = _apply_amendment(result, main_extracts[0])
 
-    # Apply amendments sequentially — each may override any subset of fields
+    # Amendments override main contract, applied in ascending order
     for amendment in amendments:
         result = _apply_amendment(result, amendment)
 

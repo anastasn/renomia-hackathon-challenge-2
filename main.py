@@ -19,6 +19,7 @@ import uvicorn
 
 from aggregator import aggregate
 from extractor import extract_document
+from refiner import refine
 
 app = FastAPI(title="Challenge 2: Document Data Extraction")
 
@@ -136,27 +137,27 @@ def solve(payload: dict):
     # --- Cache lookup -----------------------------------------------------------
     # Key is an MD5 hash of the sorted (filename, ocr_text) pairs so that
     # document order in the request does not affect cache hits.
-    cache_key = hashlib.md5(
-        json.dumps(
-            sorted(
-                [{"f": d["filename"], "t": d["ocr_text"]} for d in documents],
-                key=lambda x: x["f"],
-            ),
-            ensure_ascii=False,
-        ).encode()
-    ).hexdigest()
+    #cache_key = hashlib.md5(
+    #    json.dumps(
+    #        sorted(
+    #            [{"f": d["filename"], "t": d["ocr_text"]} for d in documents],
+    #            key=lambda x: x["f"],
+    #        ),
+    #        ensure_ascii=False,
+    #    ).encode()
+    #).hexdigest()
 
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT value FROM cache WHERE key = %s", (cache_key,))
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        if row:
-            return row[0]
-    except Exception:
-        pass  # Cache miss or DB unavailable — proceed with extraction
+    #try:
+    #    conn = get_db()
+    #    cur = conn.cursor()
+    #    cur.execute("SELECT value FROM cache WHERE key = %s", (cache_key,))
+    #    row = cur.fetchone()
+    #    cur.close()
+    #    conn.close()
+    #    if row:
+    #        return row[0]
+    #except Exception:
+    #    pass  # Cache miss or DB unavailable — proceed with extraction
 
     # --- Per-document extraction ------------------------------------------------
     extracts = [
@@ -170,26 +171,30 @@ def solve(payload: dict):
 
     # --- Aggregation ------------------------------------------------------------
     final = aggregate(extracts)
+
+    # --- Refinement (LLM post-processing) ---------------------------------------
+    final = refine(final, extracts, gemini)
+
     result = final.model_dump()
 
     log.debug(f"Aggregated result: {result}")
 
     # --- Cache write ------------------------------------------------------------
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO cache (key, value) VALUES (%s, %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-            """,
-            (cache_key, json.dumps(result)),
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception:
-        pass  # Non-fatal — result is still returned to the caller
+    #try:
+    #    conn = get_db()
+    #    cur = conn.cursor()
+    #    cur.execute(
+    #        """
+    #        INSERT INTO cache (key, value) VALUES (%s, %s)
+    #        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    #        """,
+    #        (cache_key, json.dumps(result)),
+    #    )
+    #    conn.commit()
+    #    cur.close()
+    #    conn.close()
+    #except Exception:
+    #    pass  # Non-fatal — result is still returned to the caller
 
     return result
 
