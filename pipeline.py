@@ -9,10 +9,10 @@ To adopt LangGraph, replace run_pipeline() with a StateGraph assembly.
 """
 
 from loguru import logger as log
-from models import FinalContract, PipelineState
-from extractor import extract_all_documents
-from aggregator import aggregate
-from refiner import refine
+from utils.models import FinalContract, PipelineState
+from nodes.extractor import extract_all_documents
+from nodes.aggregator import aggregate
+from nodes.refiner import refine
 
 
 def extraction_node(state: PipelineState, gemini) -> dict:

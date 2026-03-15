@@ -5,8 +5,8 @@ import re
 from google.genai.types import GenerateContentConfig, ThinkingConfig
 from typing import Any
 
-from models import ContractExtract
-from prompts import PROMPT_BATCH_EXTRACTION
+from utils.models import ContractExtract
+from utils.prompts import PROMPT_BATCH_EXTRACTION
 
 
 CONTEXT_LIMIT = 800_000   # 80 % of the 1 M token context window

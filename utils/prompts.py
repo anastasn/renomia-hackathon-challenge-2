@@ -214,3 +214,23 @@ Return only the full legal name as a plain string — no JSON, no explanation, n
 Variants:
 {variants}
 """
+
+
+PROMPT_NOTE_CONSOLIDATION = """You are consolidating insurance contract notes written in Czech.
+
+The fragments below were extracted from different documents (main contract and amendments)
+belonging to the same contract. They are separated by " | ".
+
+Your task: produce one consolidated note in Czech that:
+- Retains ALL unique facts: special conditions, coverage scope and extensions,
+  territorial limits, deductibles, exclusions, discounts, declarations, named insured parties
+- Removes exact duplicates, but keeps near-duplicates if the wording difference is meaningful
+- Where an amendment changes a condition from the main contract, state the amended version
+  and note it supersedes the original (e.g. "dle Dodatku č. 2: ...")
+- Uses clear, concise Czech — no bullet points, write in flowing sentences or short paragraphs
+
+Return only the consolidated note as plain text in target language — no JSON, no explanation, no labels.
+
+Notes:
+{notes}
+"""

@@ -2,7 +2,7 @@
 
 import re
 
-from models import ContractExtract, FinalContract, Premium
+from utils.models import ContractExtract, FinalContract, Premium
 
 # Fields that belong only to ContractExtract and must not be copied to FinalContract
 _METADATA_FIELDS = {"documentType", "amendmentNumber", "reasoning"}
