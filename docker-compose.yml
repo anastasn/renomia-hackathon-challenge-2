@@ -8,8 +8,6 @@ services:
     environment:
       - DATABASE_URL=postgresql://hackathon:hackathon@db:5432/hackathon
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-    volumes:
-      - .:/app
     depends_on:
       db:
         condition: service_healthy

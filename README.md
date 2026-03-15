@@ -1,3 +1,7 @@
+See [SOLUTION.md](SOLUTION.md) for implementation notes.
+
+---
+
 # Challenge 2: Vyčítání dat ze souborů (Document Data Extraction)
 
 Extract structured CRM fields from OCR text of insurance contracts and their amendments.
